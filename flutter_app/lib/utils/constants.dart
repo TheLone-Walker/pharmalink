@@ -83,8 +83,22 @@ class AppColors {
 }
 
 class AppConstants {
-  static const baseUrl = 'http://localhost:3000/api';
-  static const socketUrl = 'http://localhost:3000';
+  // ─── Backend Endpoints ───────────────────────────────────────────────────────
+  // Production Railway URL
+  static const String productionUrl = 'https://pharmalink-production-07a9.up.railway.app';
+  
+  // Localhost development URL (use localhost for web, 10.0.2.2 for Android emulator)
+  static const String localUrl = 'http://localhost:3000';
+
+  // Set to 'true' to connect to your live Railway backend.
+  // Set to 'false' to connect to your local Node.js server (http://localhost:3000).
+  // Can also be overridden at build time: --dart-define=USE_LOCAL=true
+  static const bool useProductionBackend = !bool.fromEnvironment('USE_LOCAL', defaultValue: false);
+
+  static String get serverBaseUrl => useProductionBackend ? productionUrl : localUrl;
+  static String get baseUrl => '$serverBaseUrl/api';
+  static String get socketUrl => serverBaseUrl;
+
   static const double buttonHeight = 52.0;
   static const double fieldRadius = 12.0;
   static const double cardRadius = 24.0;
