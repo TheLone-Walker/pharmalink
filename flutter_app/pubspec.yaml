@@ -1,0 +1,40 @@
+name: pharmalink
+description: PharmaLink - Your Health, Our Priority
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  provider: ^6.1.1
+  dio: ^5.4.0
+  flutter_secure_storage: ^9.0.0
+  shared_preferences: ^2.2.2
+  google_maps_flutter: ^2.5.3
+  socket_io_client: ^2.0.3+1
+  flutter_local_notifications: ^16.3.0
+  image_picker: ^1.0.7
+  file_picker: ^8.0.3
+  signature: ^5.4.1
+  intl: ^0.18.1
+  cached_network_image: ^3.3.1
+  google_fonts: ^6.1.0
+  fl_chart: ^0.66.2
+  permission_handler: ^11.3.0
+  http: ^1.1.2
+  uuid: ^4.3.3
+  path_provider: ^2.1.2
+  open_filex: ^4.3.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
