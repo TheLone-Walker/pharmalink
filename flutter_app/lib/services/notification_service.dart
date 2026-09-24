@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter/material.dart';
 import 'api_service.dart';
@@ -8,33 +9,44 @@ class NotificationService {
   NotificationService._internal();
 
   final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
+  bool _initialized = false;
 
   Future<void> init() async {
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const iosSettings = DarwinInitializationSettings(
-      requestAlertPermission: true,
-      requestBadgePermission: true,
-      requestSoundPermission: true,
-    );
-    const settings = InitializationSettings(android: androidSettings, iOS: iosSettings);
-    await _plugin.initialize(
-      settings,
-      onDidReceiveNotificationResponse: _onTap,
-    );
-    await _requestPermissions();
+    if (kIsWeb) return; // Local system push notifications plugin is not used on Web
+    try {
+      const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+      const iosSettings = DarwinInitializationSettings(
+        requestAlertPermission: true,
+        requestBadgePermission: true,
+        requestSoundPermission: true,
+      );
+      const settings = InitializationSettings(android: androidSettings, iOS: iosSettings);
+      await _plugin.initialize(
+        settings,
+        onDidReceiveNotificationResponse: _onTap,
+      );
+      _initialized = true;
+      await _requestPermissions();
+    } catch (e) {
+      debugPrint('NotificationService init error (safe to ignore on web/unsupported devices): $e');
+    }
   }
 
   Future<void> _requestPermissions() async {
-    await _plugin
-        .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()
-        ?.requestPermissions(alert: true, badge: true, sound: true);
-    await _plugin
-        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-        ?.requestNotificationsPermission();
+    if (kIsWeb || !_initialized) return;
+    try {
+      await _plugin
+          .resolvePlatformSpecificImplementation<IOSFlutterLocalNotificationsPlugin>()
+          ?.requestPermissions(alert: true, badge: true, sound: true);
+      await _plugin
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+          ?.requestNotificationsPermission();
+    } catch (e) {
+      debugPrint('Error requesting notification permissions: $e');
+    }
   }
 
   void _onTap(NotificationResponse response) {
-    // Handle notification tap — navigate based on payload
     debugPrint('Notification tapped: ${response.payload}');
   }
 
@@ -44,22 +56,27 @@ class NotificationService {
     required String body,
     String? payload,
   }) async {
-    const androidDetails = AndroidNotificationDetails(
-      'pharmalink_channel',
-      'PharmaLink Notifications',
-      channelDescription: 'PharmaLink app notifications',
-      importance: Importance.high,
-      priority: Priority.high,
-      color: Color(0xFF2E7D32),
-      icon: '@mipmap/ic_launcher',
-    );
-    const iosDetails = DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
-    );
-    const details = NotificationDetails(android: androidDetails, iOS: iosDetails);
-    await _plugin.show(id, title, body, details, payload: payload);
+    if (kIsWeb || !_initialized) return;
+    try {
+      const androidDetails = AndroidNotificationDetails(
+        'pharmalink_channel',
+        'PharmaLink Notifications',
+        channelDescription: 'PharmaLink app notifications',
+        importance: Importance.high,
+        priority: Priority.high,
+        color: Color(0xFF2E7D32),
+        icon: '@mipmap/ic_launcher',
+      );
+      const iosDetails = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      );
+      const details = NotificationDetails(android: androidDetails, iOS: iosDetails);
+      await _plugin.show(id, title, body, details, payload: payload);
+    } catch (e) {
+      debugPrint('Error showing local notification: $e');
+    }
   }
 
   Future<void> showOrderUpdate(String status, String orderId) async {
@@ -102,23 +119,27 @@ class NotificationService {
     required String dosage,
     required TimeOfDay time,
   }) async {
-    // Schedule daily local notification for medication reminder
-    const androidDetails = AndroidNotificationDetails(
-      'pharmalink_reminders',
-      'Medication Reminders',
-      channelDescription: 'Daily medication reminders',
-      importance: Importance.high,
-      priority: Priority.high,
-      color: Color(0xFF2E7D32),
-    );
-    const details = NotificationDetails(android: androidDetails);
-    await _plugin.show(
-      id,
-      'Medication Reminder 💊',
-      'Time to take $medicationName — $dosage',
-      details,
-      payload: 'reminder:$medicationName',
-    );
+    if (kIsWeb || !_initialized) return;
+    try {
+      const androidDetails = AndroidNotificationDetails(
+        'pharmalink_reminders',
+        'Medication Reminders',
+        channelDescription: 'Daily medication reminders',
+        importance: Importance.high,
+        priority: Priority.high,
+        color: Color(0xFF2E7D32),
+      );
+      const details = NotificationDetails(android: androidDetails);
+      await _plugin.show(
+        id,
+        'Medication Reminder 💊',
+        'Time to take $medicationName — $dosage',
+        details,
+        payload: 'reminder:$medicationName',
+      );
+    } catch (e) {
+      debugPrint('Error scheduling local notification: $e');
+    }
   }
 
   /// Register FCM token with the backend
@@ -128,6 +149,17 @@ class NotificationService {
     } catch (_) {}
   }
 
-  Future<void> cancelAll() => _plugin.cancelAll();
-  Future<void> cancel(int id) => _plugin.cancel(id);
+  Future<void> cancelAll() async {
+    if (kIsWeb || !_initialized) return;
+    try {
+      await _plugin.cancelAll();
+    } catch (_) {}
+  }
+
+  Future<void> cancel(int id) async {
+    if (kIsWeb || !_initialized) return;
+    try {
+      await _plugin.cancel(id);
+    } catch (_) {}
+  }
 }
