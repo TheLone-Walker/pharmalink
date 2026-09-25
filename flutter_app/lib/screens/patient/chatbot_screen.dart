@@ -50,7 +50,15 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     if (customText == null) _ctrl.clear();
     _scrollDown();
     try {
-      final res = await _api.post('/chat/gemini', data: {'message': text});
+      final historyPayload = _messages
+          .where((m) => m['text'] != null && m['text']!.isNotEmpty)
+          .map((m) => {'role': m['role'] == 'user' ? 'user' : 'model', 'text': m['text']})
+          .toList();
+
+      final res = await _api.post('/chat/gemini', data: {
+        'message': text,
+        'history': historyPayload,
+      });
       setState(() => _messages.add({'role': 'bot', 'text': res.data['data']['reply']}));
     } catch (_) {
       setState(() => _messages.add({
