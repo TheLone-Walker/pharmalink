@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import '../../services/api_service.dart';
 import '../../utils/constants.dart';
 import '../../widgets/shared_widgets.dart';
@@ -15,6 +16,10 @@ class SearchMedicationScreen extends StatefulWidget {
 class _SearchMedicationScreenState extends State<SearchMedicationScreen> {
   final _searchCtrl = TextEditingController();
   final _api = ApiService();
+
+  GoogleMapController? _mapCtrl;
+  final LatLng _userPos = const LatLng(3.8480, 11.5021); // Yaoundé reference
+  final Set<Marker> _markers = {};
 
   List<Map<String, dynamic>> _results = [];
   List<Map<String, dynamic>> _suggestions = [];
@@ -62,6 +67,7 @@ class _SearchMedicationScreenState extends State<SearchMedicationScreen> {
 
   @override
   void dispose() {
+    _mapCtrl?.dispose();
     _searchCtrl.removeListener(_onSearchChanged);
     _searchCtrl.dispose();
     super.dispose();
@@ -516,59 +522,149 @@ class _SearchMedicationScreenState extends State<SearchMedicationScreen> {
     );
   }
 
-  // ─── INTERACTIVE MAP VIEW ──────────────────────────────────────────────────
+  // ─── LIVE INTERACTIVE GOOGLE MAP VIEW ──────────────────────────────────────
+  Set<Marker> _getMapMarkers() {
+    final Set<Marker> markers = {};
+
+    // 1. Patient User Location Marker (Blue)
+    markers.add(
+      Marker(
+        markerId: const MarkerId('user_location'),
+        position: _userPos,
+        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+        infoWindow: const InfoWindow(title: '📍 Your Location (Yaoundé)'),
+      ),
+    );
+
+    // 2. Pharmacy Markers for Searched Medication (Green / Selected Rose)
+    for (int i = 0; i < _results.length; i++) {
+      final med = _results[i];
+      final ph = med['pharmacy'] ?? {};
+      final lat = (ph['lat'] as num?)?.toDouble() ?? (3.8480 + (i + 1) * 0.007 * ((i % 2 == 0) ? 1 : -1));
+      final lng = (ph['lng'] as num?)?.toDouble() ?? (11.5021 + (i + 1) * 0.006 * ((i % 3 == 0) ? 1 : -1));
+      final pos = LatLng(lat, lng);
+
+      final isSelected = _selectedMapPharmacy?['id'] == med['id'];
+      final pharmName = ph['pharmacyName'] ?? 'Licensed Pharmacy';
+      final price = med['priceFcfa'] ?? 0;
+      final stock = med['stockQuantity'] ?? 10;
+
+      markers.add(
+        Marker(
+          markerId: MarkerId('pharmacy_${med['id'] ?? i}'),
+          position: pos,
+          icon: BitmapDescriptor.defaultMarkerWithHue(
+            isSelected ? BitmapDescriptor.hueRose : BitmapDescriptor.hueGreen,
+          ),
+          infoWindow: InfoWindow(
+            title: '🏥 $pharmName',
+            snippet: '${med['name']} • FCFA $price • In Stock ($stock)',
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => PharmacyDetailScreen(
+                    pharmacyId: ph['id'] ?? med['pharmacyId'] ?? '',
+                    medicationId: med['id'] ?? '',
+                  ),
+                ),
+              );
+            },
+          ),
+          onTap: () {
+            setState(() => _selectedMapPharmacy = med);
+            _mapCtrl?.animateCamera(CameraUpdate.newLatLngZoom(pos, 15));
+          },
+        ),
+      );
+    }
+
+    return markers;
+  }
+
   Widget _buildInteractiveMapView() {
     final selected = _selectedMapPharmacy ?? (_results.isNotEmpty ? _results.first : null);
+    final markers = _getMapMarkers();
 
     return Stack(
       children: [
         Positioned.fill(
-          child: _CustomMedicationMapCanvas(
-            results: _results,
-            selectedMedication: selected,
-            onPinTapped: (med) {
-              setState(() => _selectedMapPharmacy = med);
+          child: GoogleMap(
+            initialCameraPosition: CameraPosition(
+              target: _userPos,
+              zoom: 13.5,
+            ),
+            markers: markers,
+            onMapCreated: (ctrl) {
+              _mapCtrl = ctrl;
             },
+            myLocationEnabled: true,
+            myLocationButtonEnabled: true,
+            zoomControlsEnabled: false,
           ),
         ),
 
-        // Map Legend
+        // Map Top Legend & Count Badge
         Positioned(
-          top: 10,
+          top: 12,
           left: 14,
           right: 14,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             decoration: BoxDecoration(
               color: Colors.white.withOpacity(0.95),
-              borderRadius: BorderRadius.circular(10),
-              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 4)],
+              borderRadius: BorderRadius.circular(12),
+              boxShadow: [
+                BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 6, offset: const Offset(0, 2)),
+              ],
             ),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                _legendDot(const Color(0xFF16A34A), 'Open & In Stock'),
-                _legendDot(const Color(0xFF94A3B8), 'Closed'),
-                _legendDot(const Color(0xFF2563EB), 'You (Yaoundé)'),
+                Row(
+                  children: [
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: const BoxDecoration(color: Color(0xFF10B981), shape: BoxShape.circle),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      '${_results.length} Pharmacies with stock',
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: AppColors.textDark),
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    Container(
+                      width: 10,
+                      height: 10,
+                      decoration: const BoxDecoration(color: Color(0xFF0284C7), shape: BoxShape.circle),
+                    ),
+                    const SizedBox(width: 4),
+                    const Text('You', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textGrey)),
+                  ],
+                ),
               ],
             ),
           ),
         ),
 
-        // Selected Pharmacy Floating Card
+        // Selected Pharmacy Floating Bottom Card
         if (selected != null)
           Positioned(
             bottom: 16,
             left: 16,
             right: 16,
             child: Container(
-              padding: const EdgeInsets.all(14),
+              padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(18),
                 border: Border.all(color: AppColors.primary, width: 1.5),
                 boxShadow: [
-                  BoxShadow(color: Colors.black.withOpacity(0.12), blurRadius: 12, offset: const Offset(0, 4)),
+                  BoxShadow(color: Colors.black.withOpacity(0.14), blurRadius: 16, offset: const Offset(0, 4)),
                 ],
               ),
               child: Column(
@@ -578,52 +674,95 @@ class _SearchMedicationScreenState extends State<SearchMedicationScreen> {
                   Row(
                     children: [
                       Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(color: AppColors.lightGreen, borderRadius: BorderRadius.circular(8)),
-                        child: const Icon(Icons.storefront, color: AppColors.primary, size: 20),
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: AppColors.lightGreen,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(Icons.local_pharmacy_rounded, color: AppColors.primary, size: 22),
                       ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 12),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(selected['pharmacy']?['pharmacyName'] ?? 'Pharmacy', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-                            Text(selected['name'] ?? '', style: const TextStyle(fontSize: 12, color: AppColors.primary, fontWeight: FontWeight.w600)),
+                            Text(
+                              selected['pharmacy']?['pharmacyName'] ?? 'Licensed Pharmacy',
+                              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15, color: AppColors.textDark),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              selected['name'] ?? '',
+                              style: const TextStyle(fontSize: 12, color: AppColors.primary, fontWeight: FontWeight.w600),
+                            ),
                           ],
                         ),
                       ),
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          Text('${selected['priceFcfa']} FCFA', style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: AppColors.primary)),
-                          Text('📍 ${selected['distanceKm']} km away', style: const TextStyle(fontSize: 11, color: AppColors.textGrey)),
+                          Text(
+                            '${selected['priceFcfa']} FCFA',
+                            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800, color: AppColors.primary),
+                          ),
+                          Text(
+                            '📍 ${selected['distanceKm'] ?? '2.4'} km away',
+                            style: const TextStyle(fontSize: 11, color: AppColors.textGrey, fontWeight: FontWeight.w500),
+                          ),
                         ],
                       ),
                     ],
                   ),
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 42,
-                    child: ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      ),
-                      icon: const Icon(Icons.shopping_bag_outlined, size: 16),
-                      label: Text('Order ${selected['name']} (${selected['priceFcfa']} FCFA)', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => PharmacyDetailScreen(
-                              pharmacyId: selected['pharmacy']?['id'] ?? selected['pharmacyId'] ?? '',
-                              medicationId: selected['id'] ?? '',
-                            ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(vertical: 11),
+                            side: const BorderSide(color: AppColors.primary),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                           ),
-                        );
-                      },
-                    ),
+                          icon: const Icon(Icons.directions, color: AppColors.primary, size: 16),
+                          label: const Text('Locate', style: TextStyle(fontWeight: FontWeight.w600, color: AppColors.primary)),
+                          onPressed: () {
+                            final ph = selected['pharmacy'] ?? {};
+                            final lat = (ph['lat'] as num?)?.toDouble() ?? 3.8480;
+                            final lng = (ph['lng'] as num?)?.toDouble() ?? 11.5021;
+                            _mapCtrl?.animateCamera(CameraUpdate.newLatLngZoom(LatLng(lat, lng), 16));
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        flex: 2,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            padding: const EdgeInsets.symmetric(vertical: 11),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                          icon: const Icon(Icons.shopping_bag_outlined, color: Colors.white, size: 18),
+                          label: Text(
+                            'Order Now (${selected['priceFcfa']} FCFA)',
+                            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: Colors.white),
+                          ),
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => PharmacyDetailScreen(
+                                  pharmacyId: selected['pharmacy']?['id'] ?? selected['pharmacyId'] ?? '',
+                                  medicationId: selected['id'] ?? '',
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -632,152 +771,4 @@ class _SearchMedicationScreenState extends State<SearchMedicationScreen> {
       ],
     );
   }
-
-  Widget _legendDot(Color c, String label) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(width: 8, height: 8, decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
-        const SizedBox(width: 4),
-        Text(label, style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: Color(0xFF334155))),
-      ],
-    );
-  }
-}
-
-// ─── CUSTOM CANVAS MAP FOR MEDICATION SEARCH ─────────────────────────────────
-class _CustomMedicationMapCanvas extends StatelessWidget {
-  final List<Map<String, dynamic>> results;
-  final Map<String, dynamic>? selectedMedication;
-  final Function(Map<String, dynamic> med) onPinTapped;
-
-  const _CustomMedicationMapCanvas({
-    required this.results,
-    required this.selectedMedication,
-    required this.onPinTapped,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (ctx, constraints) {
-        final w = constraints.maxWidth;
-        final h = constraints.maxHeight;
-
-        const centerLat = 3.8480;
-        const centerLng = 11.5021;
-        const scale = 3200.0;
-
-        return Stack(
-          children: [
-            CustomPaint(
-              size: Size(w, h),
-              painter: _MapGridPainter(),
-            ),
-
-            // Patient Location Pin (Center Beacon)
-            Positioned(
-              left: w / 2 - 12,
-              top: h / 2 - 12,
-              child: Container(
-                width: 24,
-                height: 24,
-                decoration: BoxDecoration(color: Colors.blue.withOpacity(0.3), shape: BoxShape.circle),
-                child: Center(
-                  child: Container(
-                    width: 14,
-                    height: 14,
-                    decoration: const BoxDecoration(color: Color(0xFF2563EB), shape: BoxShape.circle),
-                  ),
-                ),
-              ),
-            ),
-
-            // Pharmacy Pins with Price Tags
-            ...results.map((med) {
-              final ph = med['pharmacy'] ?? {};
-              final lat = (ph['lat'] as num?)?.toDouble() ?? centerLat;
-              final lng = (ph['lng'] as num?)?.toDouble() ?? centerLng;
-
-              final dx = (w / 2) + (lng - centerLng) * scale;
-              final dy = (h / 2) - (lat - centerLat) * scale;
-
-              final clampX = dx.clamp(20.0, w - 50.0);
-              final clampY = dy.clamp(40.0, h - 140.0);
-
-              final isSelected = selectedMedication?['id'] == med['id'];
-              final isOpen = med['isOpen'] == true || ph['isOpen'] == true;
-              final pinColor = isOpen ? const Color(0xFF16A34A) : const Color(0xFF94A3B8);
-
-              return Positioned(
-                left: clampX - (isSelected ? 20 : 16),
-                top: clampY - (isSelected ? 38 : 30),
-                child: GestureDetector(
-                  onTap: () => onPinTapped(med),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: pinColor, width: isSelected ? 2 : 1),
-                          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 4)],
-                        ),
-                        child: Text(
-                          '${med['priceFcfa']} F',
-                          style: TextStyle(fontSize: isSelected ? 11 : 9, fontWeight: FontWeight.bold, color: pinColor),
-                        ),
-                      ),
-                      Icon(
-                        Icons.location_on,
-                        color: pinColor,
-                        size: isSelected ? 34 : 26,
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            }),
-          ],
-        );
-      },
-    );
-  }
-}
-
-// ─── MAP GRID PAINTER ────────────────────────────────────────────────────────
-class _MapGridPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final bgPaint = Paint()..color = const Color(0xFFF1F5F9);
-    canvas.drawRect(Rect.fromLTWH(0, 0, size.width, size.height), bgPaint);
-
-    final greenPaint = Paint()..color = const Color(0xFFDCFCE7).withOpacity(0.6);
-    canvas.drawCircle(Offset(size.width * 0.25, size.height * 0.3), 60, greenPaint);
-    canvas.drawCircle(Offset(size.width * 0.8, size.height * 0.7), 80, greenPaint);
-
-    final roadPaint = Paint()
-      ..color = Colors.white
-      ..strokeWidth = 14
-      ..style = PaintingStyle.stroke;
-
-    final roadBorderPaint = Paint()
-      ..color = const Color(0xFFE2E8F0)
-      ..strokeWidth = 16
-      ..style = PaintingStyle.stroke;
-
-    canvas.drawLine(Offset(0, size.height * 0.5), Offset(size.width, size.height * 0.5), roadBorderPaint);
-    canvas.drawLine(Offset(0, size.height * 0.5), Offset(size.width, size.height * 0.5), roadPaint);
-
-    canvas.drawLine(Offset(size.width * 0.5, 0), Offset(size.width * 0.5, size.height), roadBorderPaint);
-    canvas.drawLine(Offset(size.width * 0.5, 0), Offset(size.width * 0.5, size.height), roadPaint);
-
-    canvas.drawLine(Offset(0, size.height * 0.2), Offset(size.width, size.height * 0.8), roadBorderPaint);
-    canvas.drawLine(Offset(0, size.height * 0.2), Offset(size.width, size.height * 0.8), roadPaint);
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
