@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../services/api_service.dart';
 import '../../utils/constants.dart';
+import '../shared/payment_screen.dart';
 import 'book_appointment_screen.dart';
 
 class NightGuardScreen extends StatefulWidget {
@@ -299,17 +300,33 @@ class _NightGuardScreenState extends State<NightGuardScreen> with SingleTickerPr
               Row(
                 children: [
                   Expanded(
+                    flex: 3,
                     child: ElevatedButton.icon(
-                      onPressed: () => _makeCall(ph['phone'] ?? '+237600000000'),
-                      icon: const Icon(Icons.phone_in_talk_rounded, size: 16),
-                      label: Text('Call Pharmacy (${ph['phone'] ?? 'Dial'})'),
+                      onPressed: () => _showNightOrderSheet(ph),
+                      icon: const Icon(Icons.shopping_bag_outlined, size: 16),
+                      label: const Text('Order Emergency Drugs'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF10B981),
                         foregroundColor: Colors.white,
                         minimumSize: const Size(0, 42),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        elevation: 2,
                       ),
                     ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    onPressed: () => _makeCall(ph['phone'] ?? '+237600000000'),
+                    icon: const Icon(Icons.phone_in_talk_rounded, color: Color(0xFF34D399), size: 20),
+                    style: IconButton.styleFrom(
+                      backgroundColor: const Color(0xFF0F172A),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        side: const BorderSide(color: Color(0xFF334155)),
+                      ),
+                      padding: const EdgeInsets.all(10),
+                    ),
+                    tooltip: 'Call Pharmacy',
                   ),
                 ],
               ),
@@ -317,6 +334,15 @@ class _NightGuardScreenState extends State<NightGuardScreen> with SingleTickerPr
           ),
         );
       },
+    );
+  }
+
+  void _showNightOrderSheet(Map<String, dynamic> ph) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _NightOrderModal(pharmacy: ph),
     );
   }
 
@@ -457,6 +483,462 @@ class _NightGuardScreenState extends State<NightGuardScreen> with SingleTickerPr
           ),
         );
       },
+    );
+  }
+}
+
+class _NightOrderModal extends StatefulWidget {
+  final Map<String, dynamic> pharmacy;
+
+  const _NightOrderModal({required this.pharmacy});
+
+  @override
+  State<_NightOrderModal> createState() => _NightOrderModalState();
+}
+
+class _NightOrderModalState extends State<_NightOrderModal> {
+  final _addressCtrl = TextEditingController(text: 'Quartier Bastos, Yaoundé');
+  String _orderType = 'delivery';
+  List<Map<String, dynamic>> _meds = [];
+  String? _selectedMedId;
+  int _qty = 1;
+
+  @override
+  void initState() {
+    super.initState();
+    final rawMeds = widget.pharmacy['featuredMeds'] as List? ?? [];
+    if (rawMeds.isNotEmpty) {
+      _meds = rawMeds.map((m) => Map<String, dynamic>.from(m as Map)).toList();
+    } else {
+      _meds = [
+        {'id': 'med-para-500', 'name': 'Paracetamol 500mg', 'priceFcfa': 1200, 'category': 'Pain Relief', 'requiresPrescription': false, 'stockQuantity': 50},
+        {'id': 'med-coartem', 'name': 'Coartem (ACT Antimalarial)', 'priceFcfa': 2200, 'category': 'Antimalarial', 'requiresPrescription': false, 'stockQuantity': 40},
+        {'id': 'med-ibu-400', 'name': 'Ibuprofen 400mg', 'priceFcfa': 1400, 'category': 'Pain Relief', 'requiresPrescription': false, 'stockQuantity': 35},
+        {'id': 'med-amox-500', 'name': 'Amoxicillin 500mg', 'priceFcfa': 2500, 'category': 'Antibiotics', 'requiresPrescription': true, 'stockQuantity': 30},
+      ];
+    }
+    if (_meds.isNotEmpty) {
+      _selectedMedId = _meds.first['id'].toString();
+    }
+  }
+
+  @override
+  void dispose() {
+    _addressCtrl.dispose();
+    super.dispose();
+  }
+
+  Map<String, dynamic>? get _currentMed {
+    if (_selectedMedId == null) return _meds.isNotEmpty ? _meds.first : null;
+    return _meds.firstWhere((m) => m['id'].toString() == _selectedMedId, orElse: () => _meds.first);
+  }
+
+  double get _subtotal {
+    final med = _currentMed;
+    if (med == null) return 0;
+    final price = double.tryParse(med['priceFcfa'].toString()) ?? 0;
+    return price * _qty;
+  }
+
+  double get _deliveryFee => _orderType == 'delivery' ? 1000 : 0;
+  double get _total => _subtotal + _deliveryFee;
+
+  void _proceedToCheckout() {
+    final med = _currentMed;
+    if (med == null) return;
+
+    final pharmacyId = widget.pharmacy['id']?.toString() ?? '';
+
+    Navigator.pop(context);
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PaymentScreen(
+          orderId: null,
+          orderType: _orderType,
+          pharmacyId: pharmacyId,
+          items: [
+            {
+              'medicationId': med['id'].toString(),
+              'quantity': _qty,
+            }
+          ],
+          totalFcfa: _total,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.88),
+      decoration: const BoxDecoration(
+        color: Color(0xFF1E293B),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      child: Column(
+        children: [
+          Center(
+            child: Container(
+              margin: const EdgeInsets.only(top: 12, bottom: 8),
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: const Color(0xFF475569),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF10B981).withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Icon(Icons.nightlight_round, color: Color(0xFF34D399), size: 22),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Night Order — ${widget.pharmacy['pharmacyName'] ?? 'Pharmacy'}',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                        ),
+                      ),
+                      Text(
+                        '📍 ${widget.pharmacy['pharmacyAddress'] ?? 'Yaoundé'}',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 12,
+                          color: const Color(0xFF94A3B8),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close_rounded, color: Colors.white70),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: Color(0xFF334155)),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '1. Select In-Stock Medication',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFFE2E8F0),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  ..._meds.map((m) {
+                    final isSelected = m['id'].toString() == _selectedMedId;
+                    final isRx = m['requiresPrescription'] == true;
+                    final price = double.tryParse(m['priceFcfa'].toString()) ?? 0;
+
+                    return InkWell(
+                      onTap: () => setState(() => _selectedMedId = m['id'].toString()),
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        margin: const EdgeInsets.only(bottom: 8),
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: isSelected ? const Color(0xFF0F766E).withOpacity(0.25) : const Color(0xFF0F172A),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: isSelected ? const Color(0xFF14B8A6) : const Color(0xFF334155),
+                            width: isSelected ? 1.5 : 1,
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(
+                              isSelected ? Icons.radio_button_checked : Icons.radio_button_off,
+                              color: isSelected ? const Color(0xFF34D399) : const Color(0xFF64748B),
+                              size: 20,
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    m['name'] ?? '',
+                                    style: GoogleFonts.plusJakartaSans(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w700,
+                                      fontSize: 13.5,
+                                    ),
+                                  ),
+                                  Row(
+                                    children: [
+                                      Text(
+                                        'FCFA ${price.toStringAsFixed(0)}',
+                                        style: GoogleFonts.plusJakartaSans(
+                                          color: const Color(0xFF34D399),
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 12.5,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 8),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        decoration: BoxDecoration(
+                                          color: isRx ? const Color(0xFF7F1D1D) : const Color(0xFF065F46),
+                                          borderRadius: BorderRadius.circular(6),
+                                        ),
+                                        child: Text(
+                                          isRx ? 'Rx Required' : 'OTC 🟢',
+                                          style: GoogleFonts.plusJakartaSans(
+                                            fontSize: 9.5,
+                                            fontWeight: FontWeight.w700,
+                                            color: isRx ? const Color(0xFFFCA5A5) : const Color(0xFF6EE7B7),
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  }),
+                  const SizedBox(height: 14),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Quantity / Boxes',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: const Color(0xFFE2E8F0),
+                        ),
+                      ),
+                      Container(
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0F172A),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: const Color(0xFF334155)),
+                        ),
+                        child: Row(
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.remove, color: Colors.white, size: 16),
+                              onPressed: _qty > 1 ? () => setState(() => _qty--) : null,
+                            ),
+                            Text(
+                              '$_qty',
+                              style: GoogleFonts.plusJakartaSans(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w800,
+                                color: Colors.white,
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.add, color: Colors.white, size: 16),
+                              onPressed: _qty < 10 ? () => setState(() => _qty++) : null,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  const Divider(color: Color(0xFF334155)),
+                  const SizedBox(height: 12),
+                  Text(
+                    '2. Choose Fulfillment Mode',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: const Color(0xFFE2E8F0),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: InkWell(
+                          onTap: () => setState(() => _orderType = 'delivery'),
+                          borderRadius: BorderRadius.circular(12),
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: _orderType == 'delivery' ? const Color(0xFF0F766E).withOpacity(0.3) : const Color(0xFF0F172A),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: _orderType == 'delivery' ? const Color(0xFF14B8A6) : const Color(0xFF334155),
+                                width: _orderType == 'delivery' ? 1.5 : 1,
+                              ),
+                            ),
+                            child: Column(
+                              children: [
+                                const Icon(Icons.moped_rounded, color: Color(0xFF34D399), size: 24),
+                                const SizedBox(height: 6),
+                                Text(
+                                  'Express Delivery',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                Text(
+                                  '+ FCFA 1,000',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    color: const Color(0xFF94A3B8),
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: InkWell(
+                          onTap: () => setState(() => _orderType = 'pickup'),
+                          borderRadius: BorderRadius.circular(12),
+                          child: Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: _orderType == 'pickup' ? const Color(0xFF0F766E).withOpacity(0.3) : const Color(0xFF0F172A),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(
+                                color: _orderType == 'pickup' ? const Color(0xFF14B8A6) : const Color(0xFF334155),
+                                width: _orderType == 'pickup' ? 1.5 : 1,
+                              ),
+                            ),
+                            child: Column(
+                              children: [
+                                const Icon(Icons.storefront_rounded, color: Color(0xFF38BDF8), size: 24),
+                                const SizedBox(height: 6),
+                                Text(
+                                  'Pharmacy Pickup',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                Text(
+                                  'Free (15 mins)',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    color: const Color(0xFF94A3B8),
+                                    fontSize: 11,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_orderType == 'delivery') ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _addressCtrl,
+                      style: GoogleFonts.plusJakartaSans(color: Colors.white, fontSize: 13),
+                      decoration: InputDecoration(
+                        labelText: 'Night Delivery Address / Neighborhood',
+                        labelStyle: GoogleFonts.plusJakartaSans(color: const Color(0xFF94A3B8), fontSize: 12),
+                        prefixIcon: const Icon(Icons.location_on_outlined, color: Color(0xFF34D399), size: 18),
+                        filled: true,
+                        fillColor: const Color(0xFF0F172A),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFF334155))),
+                        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Color(0xFF334155))),
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 16),
+                  const Divider(color: Color(0xFF334155)),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Medication Subtotal:', style: GoogleFonts.plusJakartaSans(color: const Color(0xFF94A3B8), fontSize: 13)),
+                      Text('FCFA ${_subtotal.toStringAsFixed(0)}', style: GoogleFonts.plusJakartaSans(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Night Fulfillment Fee:', style: GoogleFonts.plusJakartaSans(color: const Color(0xFF94A3B8), fontSize: 13)),
+                      Text(_deliveryFee > 0 ? 'FCFA ${_deliveryFee.toStringAsFixed(0)}' : 'FREE', style: GoogleFonts.plusJakartaSans(color: const Color(0xFF34D399), fontWeight: FontWeight.w600, fontSize: 13)),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text('Total to Pay:', style: GoogleFonts.plusJakartaSans(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 15)),
+                      Text(
+                        'FCFA ${_total.toStringAsFixed(0)}',
+                        style: GoogleFonts.plusJakartaSans(
+                          color: const Color(0xFF34D399),
+                          fontWeight: FontWeight.w900,
+                          fontSize: 18,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: const BoxDecoration(
+              color: Color(0xFF0F172A),
+              border: Border(top: BorderSide(color: Color(0xFF334155))),
+            ),
+            child: SafeArea(
+              top: false,
+              child: SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _proceedToCheckout,
+                  icon: const Icon(Icons.payment_rounded, size: 18),
+                  label: Text('Proceed to Checkout (FCFA ${_total.toStringAsFixed(0)})'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF10B981),
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size(0, 48),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    textStyle: GoogleFonts.plusJakartaSans(fontSize: 14, fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

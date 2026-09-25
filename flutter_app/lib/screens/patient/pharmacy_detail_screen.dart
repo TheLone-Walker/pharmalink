@@ -34,15 +34,21 @@ class _PharmacyDetailScreenState extends State<PharmacyDetailScreen> {
     try {
       final r1 = await _api.get('/pharmacies/${widget.pharmacyId}');
       final r2 = await _api.get('/medications/${widget.medicationId}');
-      final r3 = await _api.get('/prescriptions').catchError((_) => null);
 
       setState(() {
         _pharmacy = r1.data['data'];
         _medication = r2.data['data'];
-        if (r3 != null && r3.data['success'] == true) {
-          _patientPrescriptions = r3.data['data'] as List<dynamic>? ?? [];
-        }
       });
+
+      // prescriptions are optional – ignore any error
+      try {
+        final r3 = await _api.get('/prescriptions');
+        if (r3.data['success'] == true) {
+          setState(() {
+            _patientPrescriptions = r3.data['data'] as List<dynamic>? ?? [];
+          });
+        }
+      } catch (_) {}
     } catch (_) {} finally {
       setState(() => _loading = false);
     }

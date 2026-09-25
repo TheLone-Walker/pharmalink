@@ -539,16 +539,129 @@ BE EMPATHETIC, ACCURATE, NATURAL, AND METICULOUS AT ALL TIMES.`;
         );
 
         const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) return { reply: text };
+        if (text) {
+          return {
+            reply: text,
+            suggestions: this.generateSuggestions(text),
+          };
+        }
       } catch (err) {
         console.error('[Gemini API Error]:', err.response?.data || err.message);
       }
     }
 
     // Knowledge-aware fallback reply
+    const fallbackText = this.getKnowledgeAwareFallback(userMessage, systemData, history);
     return {
-      reply: this.getKnowledgeAwareFallback(userMessage, systemData, history),
+      reply: fallbackText,
+      suggestions: this.generateSuggestions(fallbackText),
     };
+  }
+
+  /**
+   * Generates contextual interactive clickable option chips for the patient
+   */
+  generateSuggestions(replyText) {
+    if (!replyText) return [];
+    const lower = replyText.toLowerCase();
+
+    // 1. If asking for confirmation
+    if (lower.includes('confirm this appointment') || (lower.includes('reply') && lower.includes('confirm'))) {
+      if (lower.includes('appointment') || lower.includes('consultation')) {
+        return ['✅ Confirm Appointment', '❌ Cancel', '⏰ Change Time Slot', '📱 Switch to Telemedicine'];
+      }
+      return ['✅ Confirm Order', '❌ Cancel Order', '🛵 Change Address', '🚶 Switch to Pickup'];
+    }
+
+    // 2. If showing Step 1: Hospitals
+    if (lower.includes('step 1') && (lower.includes('hospital') || lower.includes('clinic'))) {
+      return [
+        '🏥 Hôpital Central de Yaoundé',
+        '🏥 CHU Yaoundé',
+        '🏥 Clinique Bastos',
+        '🏥 Hôpital Général de Yaoundé',
+        '🏥 Hôpital Laquintinie de Douala',
+      ];
+    }
+
+    // 3. If showing Step 2: Specialists
+    if (lower.includes('step 2') && (lower.includes('specialist') || lower.includes('doctor'))) {
+      return [
+        '👨‍⚕️ Dr. Amadou (General Medicine)',
+        '👨‍⚕️ Dr. Marie Ngo (Cardiology)',
+        '👨‍⚕️ Dr. Pierre Kamdem (Pediatrics)',
+        '👨‍⚕️ Dr. Joseph Ebanda (Gynecology)',
+        '👨‍⚕️ Dr. Estelle Fotso (Dermatology)',
+      ];
+    }
+
+    // 4. If showing Step 3: Time slots
+    if (lower.includes('step 3') && (lower.includes('time slot') || lower.includes('schedule') || lower.includes('mode'))) {
+      return [
+        '⏰ Tomorrow at 09:00 AM',
+        '⏰ Tomorrow at 11:30 AM',
+        '⏰ Tomorrow at 02:30 PM',
+        '📱 Telemedicine Video Call',
+        '🏥 In-Person at Hospital',
+      ];
+    }
+
+    // 5. If showing Order Step 1: Medications
+    if (lower.includes('step 1') && (lower.includes('medication') || lower.includes('drug'))) {
+      return [
+        '💊 Paracetamol 500mg',
+        '💊 Coartem (Antimalarial)',
+        '💊 Ibuprofen 400mg',
+        '💊 Amoxicillin 500mg',
+        '💊 Metformin 500mg',
+      ];
+    }
+
+    // 6. If showing Order Step 2: Pharmacies
+    if (lower.includes('step 2') && (lower.includes('price comparison') || lower.includes('pharmacie') || lower.includes('pharmacy'))) {
+      return [
+        '🏪 Pharmacie Bastos (1 box)',
+        '🏪 Pharmacie Centrale (1 box)',
+        '🏪 Pharmacie du Soleil (1 box)',
+        '🏪 Pharmacie de la Gare (1 box)',
+      ];
+    }
+
+    // 7. If showing Order Step 3: Fulfillment
+    if (lower.includes('step 3') && (lower.includes('delivery') || lower.includes('pickup') || lower.includes('receive'))) {
+      return [
+        '🛵 Express Delivery (Quartier Bastos, Yaoundé)',
+        '🛵 Express Delivery (Biyem-Assi, Yaoundé)',
+        '🛵 Express Delivery (Bonanjo, Douala)',
+        '🚶 Pharmacy Counter Pickup',
+      ];
+    }
+
+    // 8. If greeting or general
+    if (lower.includes('how are you feeling') || lower.includes('clinical & healthcare assistant')) {
+      return [
+        '📅 Book Doctor Appointment',
+        '💊 Order Medication',
+        '🌙 24/7 Night Guard & Urgences',
+        '🦟 Malaria Symptoms & Advice',
+        '🧾 My Digital Receipts',
+      ];
+    }
+
+    // 9. If malaria advice
+    if (lower.includes('malaria') || lower.includes('coartem')) {
+      return [
+        '💊 Compare Coartem Prices',
+        '👨‍⚕️ Consult an On-Call Doctor',
+        '🌙 Find Night Guard Pharmacy',
+      ];
+    }
+
+    return [
+      '📅 Book an Appointment',
+      '💊 Order Medication',
+      '🌙 Night Guard 24/7',
+    ];
   }
 
   /**

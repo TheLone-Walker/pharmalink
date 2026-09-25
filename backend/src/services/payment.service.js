@@ -82,7 +82,7 @@ class PaymentService {
       };
     }
 
-    // 3. Live DigiPay / Gateway Integration or Sandbox Simulation
+    // 3. Live DigiPay / Gateway Integration or Instant Dev Simulation
     let gatewayResponse = null;
 
     if (!this.isSandbox && this.apiKey) {
@@ -107,12 +107,11 @@ class PaymentService {
         );
         gatewayResponse = response.data;
       } catch (err) {
-        console.error('DigiPay gateway error:', err.response?.data || err.message);
-        // Fallback to simulation if gateway is unreachable in dev/test
+        console.warn('[Payment Gateway Warning] Live gateway unreachable or sandbox mode, falling back to simulated instant approval:', err.response?.data || err.message);
       }
     }
 
-    // 4. Mark transaction and order as successful (instant confirmation in sandbox/simulated mode)
+    // 4. Mark transaction and order as successful (instant confirmation in sandbox/dev mode)
     const updatedTransaction = await prisma.transaction.update({
       where: { id: transaction.id },
       data: { status: 'success' },
@@ -122,7 +121,14 @@ class PaymentService {
       await prisma.order.update({
         where: { id: orderId },
         data: { paymentStatus: 'paid', status: 'confirmed' },
-      }).catch(() => {});
+      }).catch((e) => console.warn('[Payment Service] Could not update order status:', e.message));
+    }
+
+    if (appointmentId) {
+      await prisma.appointment.update({
+        where: { id: appointmentId },
+        data: { status: 'confirmed' },
+      }).catch((e) => console.warn('[Payment Service] Could not update appointment status:', e.message));
     }
 
     return {
@@ -130,9 +136,9 @@ class PaymentService {
       reference,
       status: 'success',
       amountFcfa: amount,
-      method,
+      method: method || 'momo',
       gatewayResponse,
-      message: 'Payment processed and verified successfully!',
+      message: `Payment of FCFA ${Math.round(amount).toLocaleString()} via ${method === 'orange_money' ? 'Orange Money' : method === 'card' ? 'Bank Card' : 'MTN Mobile Money'} confirmed successfully!`,
       transaction: updatedTransaction,
     };
   }

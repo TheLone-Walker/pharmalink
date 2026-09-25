@@ -26,7 +26,7 @@ class _AdminTransactionsScreenState extends State<AdminTransactionsScreen> {
         _totalRevenue = list.fold(0.0, (sum, t) =>
           sum + (t['status'] == 'success' ? (double.tryParse(t['amountFcfa'].toString()) ?? 0) : 0));
       });
-    } catch (_) {} finally { setState(() => _loading = false)); }
+    } catch (_) {} finally { setState(() => _loading = false); }
   }
 
   @override

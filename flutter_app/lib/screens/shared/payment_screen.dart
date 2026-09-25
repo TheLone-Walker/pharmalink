@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:dio/dio.dart';
 import '../../services/api_service.dart';
 import '../../services/auth_service.dart';
 import 'package:provider/provider.dart';
@@ -109,12 +110,31 @@ class _PaymentScreenState extends State<PaymentScreen> {
         ),
       );
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(e.toString().contains('Prescription') ? e.toString() : 'Payment failed. Please try again.'),
-          backgroundColor: AppColors.error,
-        ),
-      );
+      String msg = 'Payment failed. Please try again.';
+      if (e is DioException && e.response?.data != null) {
+        final data = e.response!.data;
+        if (data is Map && data['message'] != null) {
+          msg = data['message'].toString();
+        }
+      } else {
+        final s = e.toString().replaceAll('Exception:', '').trim();
+        if (s.isNotEmpty) msg = s;
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(msg),
+            backgroundColor: AppColors.error,
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'OK',
+              textColor: Colors.white,
+              onPressed: () {},
+            ),
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }

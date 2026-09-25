@@ -203,8 +203,8 @@ const getNightGuardServices = async (req, res, next) => {
         user: { select: { id: true, name: true, phone: true, email: true } },
         medications: {
           where: { stockQuantity: { gt: 0 } },
-          select: { id: true, name: true, priceFcfa: true, category: true, requiresPrescription: true },
-          take: 10,
+          select: { id: true, name: true, priceFcfa: true, category: true, requiresPrescription: true, stockQuantity: true },
+          take: 25,
         },
       },
     });

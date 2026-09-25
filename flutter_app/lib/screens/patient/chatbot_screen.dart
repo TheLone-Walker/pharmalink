@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../services/api_service.dart';
 import '../../utils/constants.dart';
+import '../shared/payment_screen.dart';
 import 'patient_appointments_screen.dart';
 import 'my_orders_screen.dart';
 import 'night_guard_screen.dart';
@@ -21,16 +22,14 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
   bool _loading = false;
 
   final List<String> _quickPrompts = [
-    '📅 Book appointment with Dr. Amadou',
-    '💊 Order Paracetamol 500mg for me',
-    '🌙 Night Guard pharmacies & emergency doctors 24/7',
-    '📄 Can I buy antibiotics without prescription?',
-    '🧾 How do digital receipts work for my orders?',
-    '📱 Schedule Telemedicine Video Call',
-    '🏥 Find doctors at Hôpital Central',
-    '💰 Cheapest pharmacy for Coartem',
-    '🦟 Malaria symptoms & ACT treatment',
-    '🛵 Track my medication delivery',
+    '📅 Book Doctor Appointment',
+    '💊 Order Medication',
+    '🌙 24/7 Night Guard & Urgences',
+    '🦟 Malaria Treatment Protocol',
+    '🧾 My Payment Receipts',
+    '📱 Telemedicine Video Call',
+    '🏥 Find Doctors at Hôpital Central',
+    '💰 Compare Coartem Prices',
   ];
 
   @override
@@ -38,15 +37,14 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     super.initState();
     _messages.add({
       'role': 'bot',
-      'text': 'Hello! I\'m PharmaLink Autonomous Clinical Agent 🩺.\n\nI can:\n• **Book doctor appointments** step-by-step with instant dashboard syncing.\n• **Order medications** with OTC/Prescription checks & price comparison.\n• **Find Night Guard pharmacies & 24/7 emergency services**.\n• Provide clinical guidance & digital receipts for all payments.',
+      'text': 'Hello! I\'m PharmaLink Autonomous Clinical Agent 🩺.\n\nI can:\n• **Book doctor appointments** step-by-step with your preferred hospital and exact time slot.\n• **Order medications** with live pharmacy price comparisons.\n• **Access Night Guard pharmacies & 24/7 emergency services**.\n• Provide clinical guidance & digital receipts for all payments.',
+      'suggestions': [
+        '📅 Book Doctor Appointment',
+        '💊 Order Medication',
+        '🌙 24/7 Night Guard & Urgences',
+        '🦟 Malaria Symptoms & Care',
+      ],
     });
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    _scroll.dispose();
-    super.dispose();
   }
 
   Future<void> _send([String? customText]) async {
@@ -68,14 +66,16 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
         'message': text,
         'history': historyPayload,
       });
-      final data = res.data['data'];
+      final data = res.data['data'] as Map<String, dynamic>;
       final reply = data['reply'] ?? 'Here is what I found for you.';
       final action = data['action'];
+      final suggestions = (data['suggestions'] as List?)?.map((e) => e.toString()).toList() ?? [];
 
       setState(() => _messages.add({
         'role': 'bot',
         'text': reply,
         'action': action,
+        'suggestions': suggestions,
       }));
     } catch (_) {
       setState(() => _messages.add({
@@ -228,6 +228,30 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                                   fontWeight: isUser ? FontWeight.w500 : FontWeight.w400,
                                 ),
                               ),
+
+                              // Interactive Clickable Option Chips
+                              if (!isUser && (_getSuggestionsForMessage(m).isNotEmpty)) ...[
+                                const SizedBox(height: 10),
+                                const Divider(height: 1, color: Color(0xFFF1F5F9)),
+                                const SizedBox(height: 10),
+                                Text(
+                                  'Tap an option to proceed:',
+                                  style: GoogleFonts.plusJakartaSans(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                    color: const Color(0xFF64748B),
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Wrap(
+                                  spacing: 6,
+                                  runSpacing: 6,
+                                  children: _getSuggestionsForMessage(m)
+                                      .map((chip) => _buildClickableOptionChip(chip))
+                                      .toList(),
+                                ),
+                              ],
+
                               if (m['action'] != null) ...[
                                 const SizedBox(height: 12),
                                 InkWell(
@@ -244,7 +268,16 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                                       Navigator.push(
                                         context,
                                         MaterialPageRoute(
-                                          builder: (_) => const MyOrdersScreen(),
+                                          builder: (_) => PaymentScreen(
+                                            orderId: act['id']?.toString(),
+                                            orderType: 'delivery',
+                                            pharmacyId: act['data']?['pharmacyId'] ?? '',
+                                            items: (act['data']?['items'] as List?)?.map((it) => {
+                                              'medicationId': it['medicationId'] ?? it['id'],
+                                              'quantity': it['quantity'] ?? 1,
+                                            }).toList() ?? [],
+                                            totalFcfa: double.tryParse(act['totalFcfa']?.toString() ?? '0') ?? 0,
+                                          ),
                                         ),
                                       );
                                     } else if (act['type'] == 'night_guard') {
@@ -446,6 +479,106 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  List<String> _getSuggestionsForMessage(Map m) {
+    if (m['suggestions'] is List && (m['suggestions'] as List).isNotEmpty) {
+      return (m['suggestions'] as List).map((e) => e.toString()).toList();
+    }
+    return _extractChipsFromText(m['text'] ?? '');
+  }
+
+  List<String> _extractChipsFromText(String text) {
+    if (text.isEmpty) return [];
+    final lines = text.split('\n');
+    final chips = <String>[];
+    for (final line in lines) {
+      final trimmed = line.trim();
+      if (trimmed.startsWith('•') || RegExp(r'^[1-9]\.').hasMatch(trimmed)) {
+        final clean = trimmed
+            .replaceFirst(RegExp(r'^(•|[1-9]\.)\s*'), '')
+            .replaceAll('*', '')
+            .split('|')[0]
+            .split('—')[0]
+            .split('(')[0]
+            .trim();
+        if (clean.length > 3 && clean.length < 42 && !chips.contains(clean)) {
+          chips.add(clean);
+        }
+      }
+    }
+    final lower = text.toLowerCase();
+    if (lower.contains('confirm') && lower.contains('reply') && !chips.any((c) => c.toLowerCase().contains('confirm'))) {
+      chips.insert(0, '✅ Confirm');
+      chips.add('❌ Cancel');
+    }
+    return chips.take(6).toList();
+  }
+
+  Widget _buildClickableOptionChip(String chipText) {
+    final lower = chipText.toLowerCase();
+    final isConfirm = lower.contains('confirm') || chipText.contains('✅');
+    final isCancel = lower.contains('cancel') || chipText.contains('❌');
+
+    final bg = isConfirm
+        ? const Color(0xFF047857)
+        : isCancel
+            ? const Color(0xFFEF4444)
+            : const Color(0xFFF0FDF4);
+    final border = isConfirm
+        ? const Color(0xFF059669)
+        : isCancel
+            ? const Color(0xFFF87171)
+            : const Color(0xFFA7F3D0);
+    final textCol = isConfirm || isCancel ? Colors.white : const Color(0xFF065F46);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: () {
+          String sendText = chipText;
+          if (isConfirm) {
+            sendText = 'Confirm';
+          } else if (isCancel) {
+            sendText = 'Cancel';
+          }
+          _send(sendText);
+        },
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: border, width: 1.2),
+            boxShadow: [
+              BoxShadow(
+                color: (isConfirm ? const Color(0xFF047857) : Colors.black).withOpacity(0.06),
+                blurRadius: 4,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Flexible(
+                child: Text(
+                  chipText,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: textCol,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(Icons.touch_app_rounded, size: 13, color: textCol.withOpacity(0.8)),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

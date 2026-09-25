@@ -3,6 +3,7 @@ import '../../services/api_service.dart';
 import '../../utils/constants.dart';
 import '../../widgets/shared_widgets.dart';
 import '../shared/chat_screen.dart';
+import 'write_prescription_screen.dart';
 
 class PatientDetailScreen extends StatefulWidget {
   final String patientId;
