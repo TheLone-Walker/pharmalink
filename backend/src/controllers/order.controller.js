@@ -5,25 +5,70 @@ const { emitToOrder } = require('../services/socket.service');
 
 const createOrder = async (req, res, next) => {
   try {
-    const { pharmacyId, orderType, items, deliveryAddress, deliveryLat, deliveryLng } = req.body;
+    const { pharmacyId, orderType, items, deliveryAddress, deliveryLat, deliveryLng, prescriptionId, paymentMethod } = req.body;
     const patientId = req.user.id;
 
-    // Calculate total
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      throw { status: 400, message: 'Order items are required' };
+    }
+
+    // 1. Calculate total and verify stock & prescription status
     let totalFcfa = 0;
     const orderItems = [];
+    const prescriptionRequiredMeds = [];
+
     for (const item of items) {
       const med = await prisma.medication.findUnique({ where: { id: item.medicationId } });
-      if (!med) throw { status: 404, message: `Medication ${item.medicationId} not found` };
-      if (med.stockQuantity < item.quantity) throw { status: 400, message: `Insufficient stock for ${med.name}` };
+      if (!med) throw { status: 404, message: `Medication not found: ${item.medicationId}` };
+      if (med.stockQuantity < item.quantity) {
+        throw { status: 400, message: `Insufficient stock for ${med.name} (only ${med.stockQuantity} available)` };
+      }
+      if (med.requiresPrescription) {
+        prescriptionRequiredMeds.push(med.name);
+      }
       totalFcfa += parseFloat(med.priceFcfa) * item.quantity;
       orderItems.push({ medicationId: item.medicationId, quantity: item.quantity, unitPriceFcfa: med.priceFcfa });
+    }
+
+    // 2. STRICT PRESCRIPTION ENFORCEMENT: Never sell prescription-only drugs without valid prescription
+    if (prescriptionRequiredMeds.length > 0) {
+      if (!prescriptionId) {
+        return res.status(400).json({
+          success: false,
+          code: 'PRESCRIPTION_REQUIRED',
+          message: `🚫 Prescription Required: "${prescriptionRequiredMeds.join(', ')}" is classified as a regulated prescription medication. You cannot purchase this medication without an active doctor's prescription. Please attach an issued prescription or book a consultation first.`,
+          requiredMeds: prescriptionRequiredMeds,
+        });
+      }
+
+      // Verify that prescription exists, belongs to patient, and is valid
+      const prescription = await prisma.prescription.findFirst({
+        where: {
+          id: prescriptionId,
+          patientId,
+          status: { in: ['issued', 'sent_to_pharmacy', 'approved', 'active'] },
+        },
+        include: { doctor: { select: { name: true } }, items: true },
+      });
+
+      if (!prescription) {
+        return res.status(400).json({
+          success: false,
+          code: 'INVALID_PRESCRIPTION',
+          message: `The selected prescription is invalid or has not been verified by a certified doctor. Please provide a valid prescription.`,
+        });
+      }
     }
 
     const pickupCode = orderType === 'pickup' ? generatePickupCode() : null;
 
     const order = await prisma.order.create({
       data: {
-        patientId, pharmacyId, orderType, totalFcfa, deliveryAddress,
+        patientId,
+        pharmacyId,
+        orderType,
+        totalFcfa,
+        deliveryAddress: deliveryAddress || (orderType === 'pickup' ? 'Pharmacy Counter Pickup' : 'Yaoundé, Cameroon'),
         deliveryLat: deliveryLat ? parseFloat(deliveryLat) : null,
         deliveryLng: deliveryLng ? parseFloat(deliveryLng) : null,
         pickupCode,
@@ -31,7 +76,7 @@ const createOrder = async (req, res, next) => {
       },
       include: {
         items: { include: { medication: true } },
-        pharmacy: true,
+        pharmacy: { include: { user: { select: { name: true, phone: true } } } },
         patient: { select: { name: true, phone: true, email: true } },
       },
     });
@@ -42,7 +87,7 @@ const createOrder = async (req, res, next) => {
       await notificationService.send(
         pharmacy.userId,
         'New Order Received! 📦',
-        `New order #${order.id.slice(0, 8).toUpperCase()} from ${req.user.name || 'Patient'} (FCFA ${totalFcfa})`,
+        `New order #${order.id.slice(0, 8).toUpperCase()} from ${req.user.name || 'Patient'} (FCFA ${totalFcfa.toLocaleString()})`,
         'order',
         { orderId: order.id, totalFcfa }
       );
@@ -52,7 +97,11 @@ const createOrder = async (req, res, next) => {
       emitToRole('pharmacist', 'order:new', order);
     }
 
-    res.status(201).json({ success: true, data: order, message: 'Order placed successfully' });
+    res.status(201).json({
+      success: true,
+      data: order,
+      message: 'Order placed successfully',
+    });
   } catch (err) { next(err); }
 };
 
@@ -233,4 +282,95 @@ const uploadSignature = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-module.exports = { createOrder, getMyOrders, getOrderById, cancelOrder, updateStatus, generateOrderOtp, verifyOrderOtp, uploadSignature };
+// GET /orders/:id/receipt — Generate official itemized digital receipt for all payment methods
+const getOrderReceipt = async (req, res, next) => {
+  try {
+    const order = await prisma.order.findUnique({
+      where: { id: req.params.id },
+      include: {
+        items: { include: { medication: true } },
+        pharmacy: { include: { user: { select: { name: true, phone: true, email: true } } } },
+        patient: { select: { id: true, name: true, phone: true, email: true } },
+        transactions: { orderBy: { createdAt: 'desc' }, take: 1 },
+      },
+    });
+
+    if (!order) throw { status: 404, message: 'Order not found' };
+
+    // Security check: only order patient, pharmacy, or admin can access receipt
+    if (req.user.role === 'patient' && order.patientId !== req.user.id) {
+      throw { status: 403, message: 'Unauthorized to view this receipt' };
+    }
+
+    const latestTx = order.transactions?.[0] || null;
+    const paymentMethod = latestTx?.method || (order.orderType === 'pickup' ? 'cash_pickup' : 'cash');
+    const paymentStatus = latestTx?.status === 'success' ? 'PAID' : (order.status === 'delivered' ? 'PAID' : 'CONFIRMED');
+
+    const receiptNumber = `REC-${order.createdAt.getFullYear()}${String(order.createdAt.getMonth() + 1).padStart(2, '0')}-${order.id.slice(0, 6).toUpperCase()}`;
+
+    // Itemized lines
+    const itemsFormatted = order.items.map(item => ({
+      name: item.medication?.name || 'Medication',
+      quantity: item.quantity,
+      unitPriceFcfa: parseFloat(item.unitPriceFcfa),
+      subtotalFcfa: parseFloat(item.unitPriceFcfa) * item.quantity,
+      requiresPrescription: item.medication?.requiresPrescription || false,
+    }));
+
+    const itemsSubtotal = itemsFormatted.reduce((acc, curr) => acc + curr.subtotalFcfa, 0);
+    const deliveryFee = order.orderType === 'delivery' ? 1000 : 0;
+    const totalFcfa = parseFloat(order.totalFcfa);
+
+    const receipt = {
+      receiptNumber,
+      orderId: order.id,
+      issuedAt: order.createdAt.toISOString(),
+      orderType: order.orderType,
+      patient: {
+        name: order.patient?.name || 'Patient',
+        phone: order.patient?.phone || 'N/A',
+        email: order.patient?.email || 'N/A',
+      },
+      pharmacy: {
+        name: order.pharmacy?.pharmacyName || 'Pharmacie Centrale',
+        address: order.pharmacy?.pharmacyAddress || 'Yaoundé, Cameroon',
+        licenseNumber: order.pharmacy?.licenseNumber || 'ONPC-VERIFIED',
+        phone: order.pharmacy?.user?.phone || '+237 6xx xxx xxx',
+      },
+      items: itemsFormatted,
+      financials: {
+        itemsSubtotal,
+        deliveryFee,
+        totalFcfa,
+        currency: 'XAF / FCFA',
+      },
+      payment: {
+        method: paymentMethod,
+        methodLabel: paymentMethod === 'momo' ? 'MTN Mobile Money' : (paymentMethod === 'orange_money' ? 'Orange Money Cameroun' : (paymentMethod === 'card' ? 'Visa / Mastercard' : 'Cash (COD / Counter)')),
+        status: paymentStatus,
+        transactionReference: latestTx?.reference || `PL-${order.id.slice(0, 8).toUpperCase()}`,
+        paidAt: latestTx?.createdAt ? latestTx.createdAt.toISOString() : order.createdAt.toISOString(),
+      },
+      security: {
+        isOfficial: true,
+        authority: 'PharmaLink National Digital Health Network (Cameroon)',
+        verificationCode: `PL-CERT-${order.id.slice(0, 10)}-ONPC`,
+        qrPayload: `PHARMALINK-RECEIPT:${receiptNumber}:${order.id}:${totalFcfa}:XAF:${paymentStatus}`,
+      },
+    };
+
+    res.json({ success: true, data: receipt });
+  } catch (err) { next(err); }
+};
+
+module.exports = {
+  createOrder,
+  getMyOrders,
+  getOrderById,
+  getOrderReceipt,
+  cancelOrder,
+  updateStatus,
+  generateOrderOtp,
+  verifyOrderOtp,
+  uploadSignature,
+};

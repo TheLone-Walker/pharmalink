@@ -3,6 +3,7 @@ import '../../services/api_service.dart';
 import '../../services/socket_service.dart';
 import '../../utils/constants.dart';
 import 'delivery_tracking_screen.dart';
+import 'digital_receipt_screen.dart';
 
 class MyOrdersScreen extends StatefulWidget {
   const MyOrdersScreen({super.key});
@@ -131,20 +132,45 @@ class _MyOrdersScreenState extends State<MyOrdersScreen> with SingleTickerProvid
           Text(order['orderType'] == 'delivery' ? '🚴 Delivery' : '🏪 Pick Up',
             style: const TextStyle(fontSize: 12)),
         ]),
-        if (order['status'] == 'out_for_delivery') ...[
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            height: 36,
-            child: ElevatedButton.icon(
-              onPressed: () => Navigator.push(context,
-                MaterialPageRoute(builder: (_) => DeliveryTrackingScreen(orderId: order['id']))),
-              icon: const Icon(Icons.map_outlined, size: 16),
-              label: const Text('Track Delivery', style: TextStyle(fontSize: 13)),
-              style: ElevatedButton.styleFrom(minimumSize: Size.zero),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => DigitalReceiptScreen(orderId: order['id'].toString()),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.receipt_long_rounded, size: 15),
+                label: const Text('View Receipt', style: TextStyle(fontSize: 12)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  side: const BorderSide(color: AppColors.primary),
+                  minimumSize: const Size(0, 36),
+                ),
+              ),
             ),
-          ),
-        ],
+            if (order['status'] == 'out_for_delivery') ...[
+              const SizedBox(width: 8),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () => Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => DeliveryTrackingScreen(orderId: order['id']))),
+                  icon: const Icon(Icons.map_outlined, size: 15),
+                  label: const Text('Track', style: TextStyle(fontSize: 12)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.accent,
+                    minimumSize: const Size(0, 36),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
       ]),
     );
   }

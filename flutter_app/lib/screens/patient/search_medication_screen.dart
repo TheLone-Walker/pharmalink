@@ -414,8 +414,29 @@ class _SearchMedicationScreenState extends State<SearchMedicationScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(med['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
-                    if ((med['description'] ?? '').isNotEmpty)
-                      Text(med['description'], style: const TextStyle(fontSize: 11, color: AppColors.textGrey), maxLines: 1, overflow: TextOverflow.ellipsis),
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: (med['requiresPrescription'] == true) ? const Color(0xFFFEE2E2) : const Color(0xFFDCFCE7),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(
+                              color: (med['requiresPrescription'] == true) ? const Color(0xFFFCA5A5) : const Color(0xFF86EFAC),
+                            ),
+                          ),
+                          child: Text(
+                            (med['requiresPrescription'] == true) ? '📄 Prescription Req.' : '✅ OTC / Free Sale',
+                            style: TextStyle(
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w700,
+                              color: (med['requiresPrescription'] == true) ? const Color(0xFFDC2626) : const Color(0xFF15803D),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
               ),

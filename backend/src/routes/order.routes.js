@@ -7,6 +7,7 @@ const upload = require('../middleware/upload.middleware');
 router.post('/',                        authenticate, authorize('patient'), ctrl.createOrder);
 router.get('/',                         authenticate, ctrl.getMyOrders);
 router.get('/:id',                      authenticate, ctrl.getOrderById);
+router.get('/:id/receipt',              authenticate, ctrl.getOrderReceipt);
 router.patch('/:id/cancel',             authenticate, authorize('patient'), ctrl.cancelOrder);
 router.patch('/:id/status',             authenticate, ctrl.updateStatus);
 router.post('/:id/otp/generate',        authenticate, ctrl.generateOrderOtp);

@@ -7,12 +7,15 @@ import '../../widgets/shared_widgets.dart';
 import '../../widgets/location_autocomplete_field.dart';
 import '../patient/my_orders_screen.dart';
 
+import '../patient/digital_receipt_screen.dart';
+
 class PaymentScreen extends StatefulWidget {
   final String? orderId;
   final String orderType;
   final String pharmacyId;
   final List<Map<String, dynamic>> items;
   final double totalFcfa;
+  final String? prescriptionId;
 
   const PaymentScreen({
     super.key,
@@ -21,6 +24,7 @@ class PaymentScreen extends StatefulWidget {
     required this.pharmacyId,
     required this.items,
     required this.totalFcfa,
+    this.prescriptionId,
   });
 
   @override
@@ -38,7 +42,7 @@ class _PaymentScreenState extends State<PaymentScreen> {
     {'id': 'momo', 'label': 'MTN Mobile Money (*126#)', 'icon': Icons.phone_android, 'sub': 'Cameroon MTN MoMo'},
     {'id': 'orange_money', 'label': 'Orange Money (#150#)', 'icon': Icons.phone_iphone, 'sub': 'Cameroon Orange Money'},
     {'id': 'card', 'label': 'Bank Card (Visa / Mastercard)', 'icon': Icons.credit_card_outlined, 'sub': 'Online Card Payment'},
-    {'id': 'cash', 'label': 'Cash on Delivery', 'icon': Icons.money, 'sub': 'Pay when driver delivers'},
+    {'id': 'cash', 'label': 'Cash on Delivery / Pickup', 'icon': Icons.money, 'sub': 'Pay upon arrival'},
   ];
 
   @override
@@ -75,6 +79,8 @@ class _PaymentScreenState extends State<PaymentScreen> {
           'orderType': widget.orderType,
           'items': widget.items,
           'deliveryAddress': widget.orderType == 'delivery' ? _addressCtrl.text.trim() : null,
+          'prescriptionId': widget.prescriptionId,
+          'paymentMethod': _method,
         });
         orderId = orderRes.data['data']['id'];
       }
@@ -90,19 +96,24 @@ class _PaymentScreenState extends State<PaymentScreen> {
 
       if (!mounted) return;
 
-      final successMsg = payRes.data['message'] ?? 'Payment successful!';
+      final successMsg = payRes.data['message'] ?? 'Payment processed successfully!';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(successMsg), backgroundColor: AppColors.primary),
       );
 
-      Navigator.pushAndRemoveUntil(
+      // Navigate directly to Official Digital Receipt Screen!
+      Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (_) => const MyOrdersScreen()),
-        (route) => route.isFirst,
+        MaterialPageRoute(
+          builder: (_) => DigitalReceiptScreen(orderId: orderId),
+        ),
       );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Payment failed. Please try again.'), backgroundColor: AppColors.error),
+        SnackBar(
+          content: Text(e.toString().contains('Prescription') ? e.toString() : 'Payment failed. Please try again.'),
+          backgroundColor: AppColors.error,
+        ),
       );
     } finally {
       if (mounted) setState(() => _loading = false);

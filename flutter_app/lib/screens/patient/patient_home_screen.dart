@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../services/auth_service.dart';
+import '../../services/api_service.dart';
 import '../../utils/constants.dart';
 import '../../widgets/shared_widgets.dart';
 import '../../widgets/logout_button.dart';
@@ -15,6 +16,7 @@ import 'medical_history_screen.dart';
 import 'reminders_screen.dart';
 import 'patient_appointments_screen.dart';
 import 'chatbot_screen.dart';
+import 'night_guard_screen.dart';
 import '../shared/conversations_screen.dart';
 
 class PatientHomeScreen extends StatefulWidget {
@@ -24,8 +26,11 @@ class PatientHomeScreen extends StatefulWidget {
 }
 
 class _PatientHomeScreenState extends State<PatientHomeScreen> with WidgetsBindingObserver {
+  final _api = ApiService();
   int _navIndex = 0;
   Timer? _refreshTimer;
+  List<dynamic> _upcomingAppointments = [];
+  bool _loadingAppointments = false;
 
   @override
   void initState() {
@@ -34,13 +39,41 @@ class _PatientHomeScreenState extends State<PatientHomeScreen> with WidgetsBindi
 
     // Refresh immediately on screen load
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) context.read<AuthService>().refreshUser();
+      if (mounted) {
+        context.read<AuthService>().refreshUser();
+        _loadUpcomingAppointments();
+      }
     });
 
     // Silent background refresh every 60 seconds
     _refreshTimer = Timer.periodic(const Duration(seconds: 60), (_) {
-      if (mounted) context.read<AuthService>().refreshUser();
+      if (mounted) {
+        context.read<AuthService>().refreshUser();
+        _loadUpcomingAppointments();
+      }
     });
+  }
+
+  Future<void> _loadUpcomingAppointments() async {
+    try {
+      final res = await _api.get('/appointments?role=patient');
+      if (res.data['success'] == true && mounted) {
+        final list = res.data['data'] as List<dynamic>? ?? [];
+        final now = DateTime.now();
+        final upcoming = list.where((a) {
+          final status = a['status']?.toString();
+          if (status == 'cancelled' || status == 'completed') return false;
+          try {
+            final dt = DateTime.parse(a['appointmentDate']);
+            return dt.isAfter(now.subtract(const Duration(hours: 1)));
+          } catch (_) {
+            return false;
+          }
+        }).toList();
+
+        setState(() => _upcomingAppointments = upcoming);
+      }
+    } catch (_) {}
   }
 
   @override
@@ -54,6 +87,7 @@ class _PatientHomeScreenState extends State<PatientHomeScreen> with WidgetsBindi
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && mounted) {
       context.read<AuthService>().refreshUser();
+      _loadUpcomingAppointments();
     }
   }
 
@@ -235,6 +269,12 @@ class _PatientHomeScreenState extends State<PatientHomeScreen> with WidgetsBindi
                           ),
                           const SizedBox(height: 20),
 
+                          // UPCOMING APPOINTMENT PROMINENT NOTIFICATION CARD
+                          if (_upcomingAppointments.isNotEmpty) ...[
+                            _buildUpcomingAppointmentsWidget(),
+                            const SizedBox(height: 20),
+                          ],
+
                           // Hero Healthcare Promo Banner
                           PromoImageBanner(
                             imagePath: 'assets/images/hero_healthcare_banner.jpg',
@@ -245,6 +285,88 @@ class _PatientHomeScreenState extends State<PatientHomeScreen> with WidgetsBindi
                             onCtaPressed: () => Navigator.push(
                               context,
                               MaterialPageRoute(builder: (_) => const BookAppointmentScreen()),
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+
+                          // 🌙 NIGHT GUARD & EMERGENCY QUICK BANNER
+                          GestureDetector(
+                            onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const NightGuardScreen())),
+                            child: Container(
+                              padding: const EdgeInsets.all(16),
+                              decoration: BoxDecoration(
+                                gradient: const LinearGradient(
+                                  colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
+                                ),
+                                borderRadius: BorderRadius.circular(18),
+                                border: Border.all(color: const Color(0xFF334155)),
+                                boxShadow: const [
+                                  BoxShadow(
+                                    color: Color(0x22000000),
+                                    blurRadius: 10,
+                                    offset: Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    width: 44,
+                                    height: 44,
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFEF4444).withOpacity(0.15),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: const Center(
+                                      child: Icon(Icons.nightlight_round, color: Color(0xFFFBBF24), size: 22),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Row(
+                                          children: [
+                                            Text(
+                                              'Night Guard & Urgences',
+                                              style: GoogleFonts.plusJakartaSans(
+                                                color: Colors.white,
+                                                fontSize: 14,
+                                                fontWeight: FontWeight.w800,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 6),
+                                            Container(
+                                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                              decoration: BoxDecoration(
+                                                color: const Color(0xFFDC2626),
+                                                borderRadius: BorderRadius.circular(6),
+                                              ),
+                                              child: Text(
+                                                '24/7',
+                                                style: GoogleFonts.plusJakartaSans(
+                                                  fontSize: 9,
+                                                  fontWeight: FontWeight.w900,
+                                                  color: Colors.white,
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                        Text(
+                                          'Pharmacies de garde & On-call doctors open right now',
+                                          style: GoogleFonts.plusJakartaSans(
+                                            color: const Color(0xFF94A3B8),
+                                            fontSize: 11.5,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white70, size: 14),
+                                ],
+                              ),
                             ),
                           ),
                           const SizedBox(height: 24),
@@ -464,6 +586,189 @@ class _PatientHomeScreenState extends State<PatientHomeScreen> with WidgetsBindi
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildUpcomingAppointmentsWidget() {
+    final apt = _upcomingAppointments.first as Map<String, dynamic>;
+    final doctor = apt['doctor'] as Map<String, dynamic>? ?? {};
+    final profile = doctor['doctorProfile'] as Map<String, dynamic>? ?? {};
+    final docName = doctor['name'] != null
+        ? (doctor['name'].toString().startsWith('Dr.') ? doctor['name'] : 'Dr. ${doctor['name']}')
+        : 'Dr. Specialist';
+    final specialty = profile['specialty'] ?? 'General Practitioner';
+    final hospital = apt['hospital'] ?? profile['hospital'] ?? 'Hôpital Central de Yaoundé';
+    final isTelemedicine = apt['type'] == 'telemedicine';
+
+    DateTime? aptDate;
+    try {
+      aptDate = DateTime.parse(apt['appointmentDate']).toLocal();
+    } catch (_) {}
+
+    final formattedDate = aptDate != null
+        ? '${aptDate.day}/${aptDate.month}/${aptDate.year} at ${aptDate.hour.toString().padLeft(2, '0')}:${aptDate.minute.toString().padLeft(2, '0')}'
+        : 'Upcoming';
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF0F766E), Color(0xFF0D6E48)],
+        ),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF0D6E48).withOpacity(0.25),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.2),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.alarm_on_rounded, color: Colors.white, size: 16),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'UPCOMING APPOINTMENT',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                      letterSpacing: 0.5,
+                    ),
+                  ),
+                ],
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  apt['status']?.toString().toUpperCase() ?? 'CONFIRMED',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 22,
+                backgroundColor: Colors.white.withOpacity(0.2),
+                child: const Icon(Icons.person_rounded, color: Colors.white, size: 24),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      docName,
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        color: Colors.white,
+                      ),
+                    ),
+                    Text(
+                      '$specialty • $hospital',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12,
+                        color: Colors.white.withOpacity(0.85),
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  isTelemedicine ? Icons.videocam_rounded : Icons.location_on_rounded,
+                  color: const Color(0xFFFDE047),
+                  size: 16,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    isTelemedicine ? '📱 Telemedicine Video Consultation' : '🏥 In-Person at $hospital',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.white,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Text(
+                  formattedDate,
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFFFDE047),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const PatientAppointmentsScreen(),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.calendar_month_rounded, size: 16),
+                  label: const Text('View All Appointments'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: AppColors.primary,
+                    minimumSize: const Size(0, 38),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
