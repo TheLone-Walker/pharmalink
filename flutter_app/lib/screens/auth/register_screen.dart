@@ -94,6 +94,133 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
+  Widget _buildActorBanner() {
+    String imagePath;
+    String title;
+    String subtitle;
+    Color accentColor;
+    IconData iconData;
+
+    switch (_role) {
+      case 'doctor':
+        imagePath = 'assets/images/doctor_consultation_scene.jpg';
+        title = 'Medical Doctor & Specialist';
+        subtitle = 'ONMC teleconsultation, digital e-prescriptions & lab ordering';
+        accentColor = const Color(0xFF0F766E);
+        iconData = Icons.medical_services_rounded;
+        break;
+      case 'pharmacist':
+        imagePath = 'assets/images/pharmacy_store_banner.jpg';
+        title = 'Licensed Community Pharmacist';
+        subtitle = 'Dispense orders, validate prescriptions & 24/7 night guard services';
+        accentColor = const Color(0xFF0284C7);
+        iconData = Icons.local_pharmacy_rounded;
+        break;
+      case 'delivery_driver':
+        imagePath = 'assets/images/express_delivery_driver.jpg';
+        title = 'Certified Medical Dispatch Courier';
+        subtitle = 'Fast delivery of urgent medicines with live tracking & delivery OTP';
+        accentColor = const Color(0xFFD97706);
+        iconData = Icons.delivery_dining_rounded;
+        break;
+      default:
+        imagePath = 'assets/images/patient_portrait_hero.jpg';
+        title = 'Patient & Family Healthcare';
+        subtitle = 'Search pharmacy stock, upload prescriptions & book doctor visits';
+        accentColor = AppColors.primary;
+        iconData = Icons.person_rounded;
+        break;
+    }
+
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 300),
+      child: Container(
+        key: ValueKey<String>(_role),
+        width: double.infinity,
+        height: 135,
+        margin: const EdgeInsets.only(bottom: 20),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.08),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              Image.asset(
+                imagePath,
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => Container(color: accentColor.withValues(alpha: 0.2)),
+              ),
+              Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.black.withValues(alpha: 0.2),
+                      Colors.black.withValues(alpha: 0.82),
+                    ],
+                  ),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3.5),
+                      decoration: BoxDecoration(
+                        color: accentColor.withValues(alpha: 0.95),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(iconData, size: 13, color: Colors.white),
+                          const SizedBox(width: 5),
+                          Text(
+                            title,
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text(
+                      subtitle,
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w400,
+                        color: Colors.white.withValues(alpha: 0.92),
+                        height: 1.25,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return PharmaScaffold(
@@ -117,13 +244,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
               'Join our unified digital health network in Cameroon',
               style: GoogleFonts.plusJakartaSans(fontSize: 13, color: AppColors.textGrey),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 18),
             RoleTabSelector(
               roles: _roles,
               selected: _role == 'delivery_driver' ? 'delivery' : _role,
               onSelect: (v) => setState(() => _role = v == 'delivery' ? 'delivery_driver' : v),
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 16),
+            _buildActorBanner(),
             
             // Basic Account Info
             PharmaField(
