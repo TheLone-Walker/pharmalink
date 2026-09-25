@@ -1,37 +1,44 @@
 const router = require('express').Router();
-const prisma = require('../config/db');
 const { authenticate } = require('../middleware/auth.middleware');
-const { v4: uuidv4 } = require('uuid');
+const paymentService = require('../services/payment.service');
 
+// 1. Initiate Payment (MTN MoMo, Orange Money, Card, Cash)
 router.post('/initiate', authenticate, async (req, res, next) => {
   try {
-    const { orderId, appointmentId, method, amountFcfa } = req.body;
-    const reference = 'PL-' + uuidv4().slice(0, 8).toUpperCase();
-    const transaction = await prisma.transaction.create({
-      data: {
-        userId: req.user.id,
-        orderId: orderId || null,
-        appointmentId: appointmentId || null,
-        type: 'payment',
-        amountFcfa: parseFloat(amountFcfa),
-        method,
-        status: 'pending',
-        reference,
-      },
+    const { orderId, appointmentId, method, amountFcfa, phoneNumber, description } = req.body;
+    const result = await paymentService.initiatePayment({
+      userId: req.user.id,
+      orderId,
+      appointmentId,
+      method,
+      amountFcfa,
+      phoneNumber: phoneNumber || req.user.phone,
+      description,
     });
-    // TODO: integrate actual Momo/Orange Money SDK here
-    // Simulate success for now
-    await prisma.transaction.update({ where: { id: transaction.id }, data: { status: 'success' } });
-    res.json({ success: true, data: { ...transaction, status: 'success', reference }, message: 'Payment successful' });
-  } catch (err) { next(err); }
+    res.json({ success: true, data: result, message: result.message });
+  } catch (err) {
+    next(err);
+  }
 });
 
+// 2. Verify Payment by Reference
 router.get('/verify/:reference', authenticate, async (req, res, next) => {
   try {
-    const transaction = await prisma.transaction.findUnique({ where: { reference: req.params.reference } });
-    if (!transaction) throw { status: 404, message: 'Transaction not found' };
+    const transaction = await paymentService.verifyPayment(req.params.reference);
     res.json({ success: true, data: transaction });
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(err);
+  }
+});
+
+// 3. Webhook / Callback endpoint for Payment Gateway (DigiPay / Campay / CinetPay)
+router.post('/webhook', async (req, res, next) => {
+  try {
+    const result = await paymentService.handleWebhook(req.body);
+    res.json({ success: true, data: result });
+  } catch (err) {
+    next(err);
+  }
 });
 
 module.exports = router;
