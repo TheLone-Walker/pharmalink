@@ -392,7 +392,7 @@ class _MyPrescriptionsScreenState extends State<MyPrescriptionsScreen> {
       );
       return;
     }
-    final fullUrl = url.startsWith('http') ? url : '${AppConstants.apiBaseUrl.replaceAll('/api', '')}$url';
+    final fullUrl = url.startsWith('http') ? url : '${AppConstants.baseUrl.replaceAll('/api', '')}$url';
     showDialog(
       context: context,
       builder: (ctx) => Dialog(

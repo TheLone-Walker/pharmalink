@@ -145,7 +145,7 @@ class _PrescriptionManagementScreenState extends State<PrescriptionManagementScr
       return;
     }
 
-    final fullUrl = url.startsWith('http') ? url : '${AppConstants.apiBaseUrl.replaceAll('/api', '')}$url';
+    final fullUrl = url.startsWith('http') ? url : '${AppConstants.baseUrl.replaceAll('/api', '')}$url';
 
     showDialog(
       context: context,
