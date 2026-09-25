@@ -25,7 +25,7 @@ class GeminiService {
       const doctors = await prisma.user.findMany({
         where: { role: 'doctor', isActive: true },
         include: { doctorProfile: true },
-        take: 20,
+        take: 30,
       });
 
       const doctorsList = doctors.length > 0
@@ -33,11 +33,11 @@ class GeminiService {
             const p = d.doctorProfile || {};
             return `• Dr. ${d.name.replace(/^Dr\.\s*/i, '')} (ID: ${d.id}) | Specialty: ${p.specialty || 'General Medicine'} | Hospital: ${p.hospital || 'Hôpital Central de Yaoundé'} | Status: Verified ONMC | On-Call / Emergency: ${p.isOnCall ? 'YES 🌙 (24/7 Night Guard)' : 'Regular Clinic'}`;
           }).join('\n')
-        : '• Dr. Amadou | Specialty: General Practitioner | Hospital: Hôpital Central de Yaoundé';
+        : '• Dr. Amadou | Specialty: General Medicine | Hospital: Hôpital Central de Yaoundé';
 
       const medications = await prisma.medication.findMany({
         include: { pharmacy: true },
-        take: 40,
+        take: 60,
         orderBy: { priceFcfa: 'asc' },
       });
 
@@ -58,6 +58,221 @@ class GeminiService {
   }
 
   /**
+   * Helper to accurately parse date and time from user message & history.
+   * Never picks a random time.
+   */
+  parseAppointmentDateTime(text, historyText = '') {
+    const combined = (text + ' ' + historyText).toLowerCase();
+    
+    // Look for hours and time slots
+    // Match: "09:00 AM", "9:30", "14:00", "2:30 pm", "10h", "10h30", "11:00 am", "08:30", "slot 1", "slot 2", "slot 3"
+    const timeMatch = combined.match(/\b([01]?\d|2[0-3])(?::|\.|\s*h\s*)([0-5]\d)?\s*(am|pm)?\b/i) ||
+                      combined.match(/\b([1-9]|1[0-2])\s*(am|pm)\b/i);
+
+    let hour = null;
+    let minute = 0;
+
+    if (timeMatch) {
+      if (timeMatch[3] !== undefined || timeMatch[2] === 'am' || timeMatch[2] === 'pm') {
+        let rawHour = parseInt(timeMatch[1], 10);
+        const ampm = (timeMatch[3] || timeMatch[2] || '').toLowerCase();
+        if (timeMatch[2] && !isNaN(parseInt(timeMatch[2], 10))) {
+          minute = parseInt(timeMatch[2], 10);
+        }
+        if (ampm === 'pm' && rawHour < 12) rawHour += 12;
+        if (ampm === 'am' && rawHour === 12) rawHour = 0;
+        hour = rawHour;
+      } else {
+        hour = parseInt(timeMatch[1], 10);
+        if (timeMatch[2] && !isNaN(parseInt(timeMatch[2], 10))) {
+          minute = parseInt(timeMatch[2], 10);
+        }
+      }
+    } else if (combined.includes('slot 1') || combined.includes('morning') || combined.includes('matin')) {
+      hour = 9;
+      minute = 0;
+    } else if (combined.includes('slot 2') || combined.includes('midday') || combined.includes('midi')) {
+      hour = 11;
+      minute = 30;
+    } else if (combined.includes('slot 3') || combined.includes('afternoon') || combined.includes('après-midi') || combined.includes('apres midi')) {
+      hour = 14;
+      minute = 30;
+    }
+
+    const now = new Date();
+    const targetDate = new Date();
+
+    if (combined.includes('tomorrow') || combined.includes('demain')) {
+      targetDate.setDate(now.getDate() + 1);
+    } else if (combined.includes('today') || combined.includes("aujourd'hui") || combined.includes('aujourdhui')) {
+      // today
+    } else {
+      const daysOfWeek = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+      const frenchDays = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
+      
+      let foundDayIdx = -1;
+      for (let i = 0; i < 7; i++) {
+        if (combined.includes(daysOfWeek[i]) || combined.includes(frenchDays[i])) {
+          foundDayIdx = i;
+          break;
+        }
+      }
+
+      if (foundDayIdx !== -1) {
+        const currentDayIdx = now.getDay();
+        let diff = foundDayIdx - currentDayIdx;
+        if (diff <= 0) diff += 7;
+        targetDate.setDate(now.getDate() + diff);
+      } else {
+        targetDate.setDate(now.getDate() + 1);
+      }
+    }
+
+    if (hour !== null) {
+      targetDate.setHours(hour, minute, 0, 0);
+      return {
+        date: targetDate,
+        hasExplicitTime: true,
+        formatted: targetDate.toLocaleDateString('en-US', {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit'
+        })
+      };
+    }
+
+    // Default to tomorrow 09:00 AM only if date was resolved
+    targetDate.setHours(9, 0, 0, 0);
+    return {
+      date: targetDate,
+      hasExplicitTime: false,
+      formatted: targetDate.toLocaleDateString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric'
+      })
+    };
+  }
+
+  /**
+   * Helper to accurately match doctor and hospital chosen by user.
+   */
+  resolveDoctor(userMessage, recentHistoryText, doctors = []) {
+    const combined = (userMessage + ' ' + recentHistoryText).toLowerCase();
+
+    // 1. Exact or partial Doctor Name matching
+    for (const doc of doctors) {
+      const cleanName = doc.name.toLowerCase().replace(/^dr\.\s*/i, '').trim();
+      const nameParts = cleanName.split(/\s+/);
+      
+      if (combined.includes(cleanName)) {
+        return doc;
+      }
+      for (const part of nameParts) {
+        if (part.length >= 4 && combined.includes(part)) {
+          return doc;
+        }
+      }
+    }
+
+    // 2. Specialty matching
+    for (const doc of doctors) {
+      const specialty = (doc.doctorProfile?.specialty || '').toLowerCase();
+      if (specialty && specialty.length >= 4 && combined.includes(specialty)) {
+        return doc;
+      }
+      if (combined.includes('cardio') && specialty.includes('cardio')) return doc;
+      if (combined.includes('pediat') && specialty.includes('pediat')) return doc;
+      if (combined.includes('derma') && specialty.includes('derma')) return doc;
+      if (combined.includes('gynec') && specialty.includes('gynec')) return doc;
+    }
+
+    // 3. Hospital matching
+    for (const doc of doctors) {
+      const hospital = (doc.doctorProfile?.hospital || '').toLowerCase();
+      if (hospital) {
+        if (combined.includes('laquintinie') && hospital.includes('laquintinie')) return doc;
+        if (combined.includes('chu') && hospital.includes('chu')) return doc;
+        if (combined.includes('bastos') && hospital.includes('bastos')) return doc;
+        if ((combined.includes('général') || combined.includes('general')) && hospital.includes('général')) return doc;
+        if (combined.includes('central') && hospital.includes('central')) return doc;
+      }
+    }
+
+    return doctors.length > 0 ? doctors[0] : null;
+  }
+
+  /**
+   * Helper to accurately match medication and target pharmacy chosen by user.
+   */
+  resolveMedicationAndPharmacy(userMessage, recentHistoryText, medications = []) {
+    const combined = (userMessage + ' ' + recentHistoryText).toLowerCase();
+
+    // Identify target pharmacy
+    let targetPharmacyKeywords = [];
+    if (combined.includes('bastos')) targetPharmacyKeywords.push('bastos');
+    if (combined.includes('centrale')) targetPharmacyKeywords.push('centrale');
+    if (combined.includes('soleil')) targetPharmacyKeywords.push('soleil');
+    if (combined.includes('gare')) targetPharmacyKeywords.push('gare');
+
+    // Identify target drug
+    let targetDrugKeywords = [];
+    if (combined.includes('paracetamol')) targetDrugKeywords.push('paracetamol');
+    if (combined.includes('coartem') || combined.includes('artemether')) targetDrugKeywords.push('coartem');
+    if (combined.includes('amoxicillin')) targetDrugKeywords.push('amoxicillin');
+    if (combined.includes('augmentin')) targetDrugKeywords.push('augmentin');
+    if (combined.includes('ibuprofen')) targetDrugKeywords.push('ibuprofen');
+    if (combined.includes('metformin')) targetDrugKeywords.push('metformin');
+    if (combined.includes('lisinopril')) targetDrugKeywords.push('lisinopril');
+
+    let candidates = medications;
+
+    // Filter by pharmacy first
+    if (targetPharmacyKeywords.length > 0) {
+      const filteredByPharm = candidates.filter(m => {
+        const phName = (m.pharmacy?.pharmacyName || '').toLowerCase();
+        return targetPharmacyKeywords.some(kw => phName.includes(kw));
+      });
+      if (filteredByPharm.length > 0) {
+        candidates = filteredByPharm;
+      }
+    }
+
+    // Filter by drug name
+    if (targetDrugKeywords.length > 0) {
+      const filteredByDrug = candidates.filter(m => {
+        const medName = m.name.toLowerCase();
+        return targetDrugKeywords.some(kw => medName.includes(kw));
+      });
+      if (filteredByDrug.length > 0) {
+        candidates = filteredByDrug;
+      }
+    }
+
+    // Extract quantity
+    const qtyMatch = combined.match(/\b(?:qty|quantity|x|boxes|packs|boîtes)?\s*([1-9]|10)\s*(?:boxes|packs|boîtes|units|x)?\b/i);
+    let quantity = 1;
+    if (qtyMatch && parseInt(qtyMatch[1], 10) > 0) {
+      quantity = parseInt(qtyMatch[1], 10);
+    }
+
+    // Extract address
+    let address = 'Quartier Bastos, Yaoundé';
+    if (combined.includes('bastos')) address = 'Quartier Bastos, Yaoundé';
+    else if (combined.includes('biyem')) address = 'Biyem-Assi, Yaoundé';
+    else if (combined.includes('mendong')) address = 'Mendong, Yaoundé';
+    else if (combined.includes('omnisp')) address = 'Omnisport, Yaoundé';
+    else if (combined.includes('douala') || combined.includes('bonanjo')) address = 'Bonanjo, Douala';
+    else if (combined.includes('akwa')) address = 'Akwa, Douala';
+
+    const targetMed = candidates.length > 0 ? candidates[0] : (medications.length > 0 ? medications[0] : null);
+
+    return { targetMed, quantity, address };
+  }
+
+  /**
    * Executes autonomous agent actions (Final Confirmation for Appointment or Medication Order)
    */
   async handleAgentActions(userMessage, currentUser, systemData, history = []) {
@@ -74,30 +289,25 @@ class GeminiService {
 
     // Look back in history to detect context
     const recentHistoryText = Array.isArray(history)
-      ? history.slice(-4).map(h => (h.text || h.content || '').toLowerCase()).join(' ')
+      ? history.slice(-6).map(h => (h.text || h.content || '').toLowerCase()).join(' ')
       : '';
 
     // ─── ACTION 1: EXPLICIT APPOINTMENT CONFIRMATION ────────────────────────────
     const hasPendingAppointmentReview = recentHistoryText.includes('hospital') ||
       recentHistoryText.includes('specialist') ||
       recentHistoryText.includes('confirm this appointment') ||
+      recentHistoryText.includes('step 4: review your consultation summary') ||
       recentHistoryText.includes('step 4: review your appointment') ||
       recentHistoryText.includes('rendez-vous');
 
     if ((isExplicitConfirmation && hasPendingAppointmentReview && userId) ||
         (lower.includes('confirm') && lower.includes('doctor') && userId)) {
       
-      let targetDoctor = systemData.doctors.find(d =>
-        (lower + ' ' + recentHistoryText).includes(d.name.toLowerCase().replace('dr.', '').trim())
-      );
-      if (!targetDoctor && systemData.doctors.length > 0) {
-        targetDoctor = systemData.doctors[0];
-      }
+      const targetDoctor = this.resolveDoctor(userMessage, recentHistoryText, systemData.doctors);
 
       if (targetDoctor) {
-        const appointmentDate = new Date();
-        appointmentDate.setDate(appointmentDate.getDate() + 1);
-        appointmentDate.setHours(10, 0, 0, 0);
+        const timeResult = this.parseAppointmentDateTime(userMessage, recentHistoryText);
+        const appointmentDate = timeResult.date;
 
         const type = (lower + ' ' + recentHistoryText).includes('telemedicine') ||
           (lower + ' ' + recentHistoryText).includes('video') ||
@@ -114,7 +324,7 @@ class GeminiService {
               doctorId: targetDoctor.id,
               appointmentDate,
               type,
-              notes: `Booked via PharmaLink AI Assistant step-by-step consultation assistant.`,
+              notes: `Booked via PharmaLink AI Assistant consultation assistant for ${targetDoctor.name} at ${hospitalName}.`,
               hospital: hospitalName,
               status: 'confirmed',
             },
@@ -123,21 +333,14 @@ class GeminiService {
           await notificationService.send(
             targetDoctor.id,
             'New Appointment Confirmed 📅',
-            `Confirmed appointment with ${currentUser.name || 'Patient'} on ${appointmentDate.toLocaleDateString()} at 10:00 AM at ${hospitalName}.`,
+            `Confirmed appointment with ${currentUser.name || 'Patient'} on ${timeResult.formatted} at ${hospitalName}.`,
             'appointment'
           ).catch(() => {});
 
           const docName = `Dr. ${targetDoctor.name.replace(/^Dr\.\s*/i, '')}`;
-          const formattedDate = appointmentDate.toLocaleDateString('en-US', {
-            weekday: 'short',
-            month: 'short',
-            day: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit'
-          });
 
           return {
-            reply: `🎉 **Appointment Successfully Confirmed & Booked!**\n\nHere are your final consultation details:\n• **Hospital / Facility:** 🏥 ${hospitalName}\n• **Specialist:** 👨‍⚕️ **${docName}** (${targetDoctor.doctorProfile?.specialty || 'General Medicine'})\n• **Date & Time:** 📅 ${formattedDate}\n• **Consultation Mode:** ${type === 'telemedicine' ? '📱 Telemedicine Video Call' : '🏥 In-Person at Hospital'}\n• **Dashboard Sync:** Added to your Patient Dashboard upcoming appointments section ✅\n• **Status:** Confirmed ✅\n\nDr. ${targetDoctor.name.replace(/^Dr\.\s*/i, '')}'s clinic has been notified. You can view and manage this appointment directly in your dashboard.`,
+            reply: `🎉 **Appointment Successfully Confirmed & Booked!**\n\nHere are your final consultation details:\n• **Hospital / Facility:** 🏥 **${hospitalName}**\n• **Specialist:** 👨‍⚕️ **${docName}** (${targetDoctor.doctorProfile?.specialty || 'General Medicine'})\n• **Date & Time:** 📅 **${timeResult.formatted}**\n• **Consultation Mode:** ${type === 'telemedicine' ? '📱 Telemedicine Video Call' : '🏥 In-Person at Hospital'}\n• **Dashboard Sync:** Added to your Patient Dashboard upcoming appointments section with automated reminders ✅\n• **Status:** Confirmed ✅\n\n${docName}'s department at ${hospitalName} has received your booking. You can view your full appointment anytime in your Patient Dashboard.`,
             action: {
               type: 'appointment',
               id: appointment.id,
@@ -162,18 +365,11 @@ class GeminiService {
     if ((isExplicitConfirmation && hasPendingOrderReview && userId) ||
         (lower.includes('confirm') && (lower.includes('order') || lower.includes('drug') || lower.includes('medication')) && userId)) {
       
-      // Find matching medication from context or current message
-      let targetMed = systemData.medications.find(m =>
-        (lower + ' ' + recentHistoryText).includes(m.name.toLowerCase().split(' ')[0])
-      );
-      if (!targetMed && systemData.medications.length > 0) {
-        targetMed = systemData.medications[0];
-      }
+      const { targetMed, quantity, address } = this.resolveMedicationAndPharmacy(userMessage, recentHistoryText, systemData.medications);
 
       if (targetMed) {
         // ─── STRICT PRESCRIPTION COMPLIANCE CHECK ───
         if (targetMed.requiresPrescription) {
-          // Check if patient has an approved prescription
           let approvedRx = null;
           try {
             approvedRx = await prisma.prescription.findFirst({
@@ -187,7 +383,7 @@ class GeminiService {
 
           if (!approvedRx) {
             return {
-              reply: `⚠️ **Prescription Required for ${targetMed.name}**\n\nUnder Cameroon pharmaceutical regulations, **${targetMed.name}** is a regulated prescription drug and **cannot be dispensed without an approved doctor's prescription**.\n\n🛡️ **How to get this medication:**\n1. Book a quick consultation with one of our certified doctors to receive a verified digital prescription.\n2. Or choose from our wide range of **Over-The-Counter (OTC)** alternatives.\n\n*Would you like me to connect you with a doctor right now to get evaluated?*`,
+              reply: `⚠️ **Prescription Required for ${targetMed.name}**\n\nUnder Cameroon pharmaceutical regulations, **${targetMed.name}** is a regulated prescription drug and **cannot be dispensed without an approved doctor's prescription**.\n\n🛡️ **How to get this medication:**\n1. Book a quick consultation with one of our certified doctors (e.g. Dr. Amadou, Dr. Marie Ngo) to receive a verified digital prescription.\n2. Or upload your physical prescription in the **My Prescriptions** section for pharmacist validation.\n3. Or choose from our wide range of **Over-The-Counter (OTC)** alternatives.\n\n*Would you like me to connect you with a doctor right now to get evaluated?*`,
               action: {
                 type: 'appointment',
                 title: 'Book Doctor Consultation for Prescription',
@@ -196,18 +392,19 @@ class GeminiService {
           }
         }
 
-        const quantity = 1;
         const totalFcfa = parseFloat(targetMed.priceFcfa) * quantity;
         const pharmacyId = targetMed.pharmacyId;
+        const isPickup = (lower + ' ' + recentHistoryText).includes('pickup') || (lower + ' ' + recentHistoryText).includes('retrait');
+        const orderType = isPickup ? 'pickup' : 'delivery';
 
         try {
           const order = await prisma.order.create({
             data: {
               patientId: userId,
               pharmacyId,
-              orderType: 'delivery',
+              orderType,
               totalFcfa,
-              deliveryAddress: 'Quartier Bastos, Yaoundé',
+              deliveryAddress: isPickup ? 'Pharmacy Counter Pickup' : address,
               status: 'pending',
               items: {
                 create: [
@@ -225,7 +422,7 @@ class GeminiService {
           const pharmName = targetMed.pharmacy?.pharmacyName || 'Pharmacie Centrale';
 
           return {
-            reply: `🎉 **Medication Order Confirmed & Placed!**\n\nYour order has been registered at **${pharmName}**:\n• **Medication:** 💊 ${targetMed.name} x${quantity} ${targetMed.requiresPrescription ? '(Prescription Verified 📄)' : '(OTC 🟢)'}\n• **Total Amount:** FCFA ${totalFcfa.toLocaleString()}\n• **Pharmacy:** 🏪 ${pharmName}\n• **Fulfillment:** 🛵 Express Doorstep Courier Delivery\n• **Digital Receipt:** 🧾 Universal digital receipt generated for all payment methods\n• **Status:** Pending Payment / Packaging\n\nTap below to complete payment with **MTN MoMo**, **Orange Money**, **Card**, or **Cash on Delivery** and download your official receipt.`,
+            reply: `🎉 **Medication Order Confirmed & Placed!**\n\nYour order has been registered at **${pharmName}**:\n• **Medication:** 💊 **${targetMed.name}** x${quantity} ${targetMed.requiresPrescription ? '(Prescription Verified 📄)' : '(OTC 🟢)'}\n• **Total Amount:** **FCFA ${totalFcfa.toLocaleString()}**\n• **Pharmacy:** 🏪 **${pharmName}**\n• **Fulfillment:** ${isPickup ? '🚶 Pharmacy Counter Pickup' : `🛵 Express Doorstep Courier Delivery (${address})`}\n• **Digital Receipt:** 🧾 Universal digital receipt generated for all payment methods\n• **Status:** Pending Payment / Packaging\n\nTap below to complete payment with **MTN MoMo**, **Orange Money**, **Card**, or **Cash on Delivery** and download your official receipt.`,
             action: {
               type: 'order',
               id: order.id,
@@ -260,76 +457,50 @@ class GeminiService {
 You have FULL ACCESS to the PharmaLink live healthcare database below.
 
 === LIVE PHARMALINK SYSTEM DIRECTORY ===
-AVAILABLE CERTIFIED DOCTORS, SPECIALTIES, HOSPITALS & ON-CALL STATUS:
+AVAILABLE CERTIFIED DOCTORS, SPECIALTIES & HOSPITALS:
 ${systemData.doctorsText}
-• Dr. Amadou (General Medicine) - Hôpital Central de Yaoundé | Schedule: Mon-Fri: 08:00-15:30, Sat: 09:00-13:00 | Slots: 09:00 AM, 11:30 AM, 02:30 PM | On-Call: 24/7 Night Guard
-• Dr. Marie Ngo (Cardiology) - Clinique Bastos & CHU Yaoundé | Schedule: Tue & Thu: 09:00-16:00, Fri: 10:00-14:00 | Slots: 09:30 AM, 11:00 AM, 03:00 PM | On-Call: Emergency Cardiology
-• Dr. Pierre Kamdem (Pediatrics) - Hôpital Général de Yaoundé | Schedule: Mon-Fri: 08:30-16:00 | Slots: 09:00 AM, 10:30 AM, 02:00 PM | On-Call: Pediatric Urgent Care
-• Dr. Estelle Fotso (Dermatology) - Hôpital Laquintinie de Douala | Schedule: Mon, Wed, Fri: 09:00-15:00 | Slots: 10:00 AM, 01:30 PM
-• Dr. Joseph Ebanda (Gynecology & Obstetrics) - Hôpital Central de Yaoundé | Schedule: Mon-Sat: 08:00-16:00 | Slots: 08:30 AM, 11:00 AM, 02:30 PM | On-Call: Maternity Emergencies
 
 PARTNER HOSPITALS LIST:
-1. 🏥 Hôpital Central de Yaoundé
-2. 🏥 Centre Hospitalier Universitaire (CHU) Yaoundé
-3. 🏥 Hôpital Général de Yaoundé
-4. 🏥 Clinique Bastos (Yaoundé)
-5. 🏥 Hôpital Laquintinie de Douala
-6. 🏥 Hôpital Jamot de Yaoundé
+1. 🏥 Hôpital Central de Yaoundé (Dr. Amadou - General Medicine, Dr. Joseph Ebanda - Gynecology & Obstetrics)
+2. 🏥 Centre Hospitalier Universitaire (CHU) Yaoundé (Dr. Marie Ngo - Cardiology)
+3. 🏥 Clinique Bastos (Yaoundé) (Dr. Marie Ngo - Cardiology)
+4. 🏥 Hôpital Général de Yaoundé (Dr. Pierre Kamdem - Pediatrics)
+5. 🏥 Hôpital Laquintinie de Douala (Dr. Estelle Fotso - Dermatology)
 
 NIGHT GUARD & 24/7 EMERGENCY SERVICES:
-• Pharmacies de Garde (24/7): Pharmacie Bastos (Open 24/7), Pharmacie de la Gare, Pharmacie Centrale
-• Emergency On-Call Doctors: Dr. Amadou (General Urgent Care), Dr. Joseph Ebanda (Obstetrics Emergency)
+• Pharmacies de Garde (24/7): Pharmacie Bastos (Open 24/7), Pharmacie de la Gare (Open 24/7)
+• Emergency On-Call Doctors: Dr. Amadou (Urgent Care), Dr. Joseph Ebanda (Obstetrics Emergency)
 • National Emergency Hotlines: SAMU 119, SAMU 15 (Free toll-free medical response in Cameroon)
 
 REAL-TIME PHARMACY DRUG INVENTORY, PRICES & PRESCRIPTION REGULATION:
 ${systemData.medicationsText}
 ========================================
 
-REGULATION & PRESCRIPTION RULES (CRITICAL):
-• Medications marked with 📄 [PRESCRIPTION REQUIRED] (such as antibiotics like Amoxicillin, injectable drugs, controlled substances) CANNOT be sold or dispensed without a doctor's prescription.
-• Medications marked with 🟢 [OVER-THE-COUNTER / OTC] (such as Paracetamol, Coartem, Vitamin C, basic antacids) can be freely purchased without a prescription.
-• If a patient asks to buy a regulated prescription drug without a prescription, politely explain that regulations prevent dispensing without a prescription, and offer to schedule a doctor consultation so they can obtain one legally.
+CRITICAL DOCTOR, HOSPITAL & TIME ACCURACY RULES:
+1. NEVER book with a different doctor or hospital than the one the patient asked for! If the patient asked for Dr. Pierre Kamdem at Hôpital Général, keep Dr. Pierre Kamdem and Hôpital Général.
+2. NEVER choose a random appointment date or time. You MUST ask the user which date and time slot they want (e.g. Tomorrow at 09:00 AM, Tomorrow at 02:30 PM, or Friday at 11:30 AM). If they haven't chosen a time, prompt them to pick a time slot first!
+3. When summarizing the appointment in Step 4, display the EXACT doctor, hospital, and requested date/time slot.
 
-PAYMENT & DIGITAL RECEIPT RULES:
-• Digital receipts are automatically generated for ALL payment methods (MTN MoMo, Orange Money, Credit Card, and Cash on Delivery / Pickup Counter).
-• Patients can download and view their digital receipt anytime in their Patient Dashboard.
+CRITICAL PHARMACY & MEDICATION ACCURACY RULES:
+1. When ordering drugs, keep the EXACT medication and the EXACT pharmacy selected by the user (e.g. Pharmacie Bastos vs Pharmacie Centrale).
+2. Medications marked with 📄 [PRESCRIPTION REQUIRED] CANNOT be dispensed without a valid doctor's prescription. Explain this politely if requested.
+3. Universal digital receipts are provided for ALL payment methods (MTN MoMo, Orange Money, Card, and Cash).
 
-PATIENT DASHBOARD APPOINTMENTS:
-• All booked consultations are immediately synchronized to the patient's Dashboard under Upcoming Appointments.
-
-MANDATORY APPOINTMENT BOOKING WORKFLOW (STEP-BY-STEP PROTOCOL):
-When the user wants to book or make an appointment:
-• STEP 1 (Ask Hospital First): If hospital not specified, ask "Which hospital would you like to visit?" and list the partner hospitals clearly with numbers.
-• STEP 2 (List Specialists at that Hospital): Once hospital chosen, list available doctors & specialties at that hospital, and ask them to choose.
-• STEP 3 (Show Schedule & Time Slots): Show working hours and 2-3 available slots (e.g. Tomorrow 09:00 AM, 11:30 AM, 02:30 PM, In-person vs Telemedicine), and ask what suits them.
-• STEP 4 (Review & Ask for Confirmation): Summarize Hospital, Doctor, Date/Time, Mode, and note that it will sync to their Patient Dashboard. Ask:
+APPOINTMENT WORKFLOW PROTOCOL:
+• STEP 1 (Hospital): Ask which hospital they prefer if not yet known.
+• STEP 2 (Doctor & Specialty): Present specialists at that specific hospital.
+• STEP 3 (Date & Time Selection): Ask what specific date and time slot they prefer (e.g. Tomorrow 09:00 AM, 11:30 AM, 02:30 PM, In-person vs Telemedicine).
+• STEP 4 (Review & Confirmation): Summarize exact Hospital, exact Doctor, exact Date & Time, Mode, and ask:
   "👉 **Do you confirm this appointment? (Please reply 'Yes' or 'Confirm' to finalize your booking)**"
-• STEP 5 (Final Confirmation): When they reply "Yes" or "Confirm", acknowledge and finalize!
 
-MANDATORY MEDICATION ORDER WORKFLOW (STEP-BY-STEP PROTOCOL):
-When the user wants to order or buy medications:
-• STEP 1 (Ask Medication First): If medication name is not specified yet, ask:
-  "Which medication are you looking to purchase?" (Give examples: Paracetamol 500mg [OTC], Coartem [OTC], Amoxicillin 500mg [Rx Required], Ibuprofen 400mg [OTC]).
-• STEP 2 (Price & Pharmacy Comparison + Rx Flag): Once the drug is named, inspect the directory and list the licensed pharmacies with stock & price (sorted cheapest first) and specify if prescription is needed. Ask which pharmacy they prefer and quantity.
-• STEP 3 (Delivery Method & Location): Ask for fulfillment method:
-  1. 🛵 Express Doorstep Courier Delivery (Direct home delivery with live GPS courier tracking)
-  2. 🚶 Pharmacy Counter Pickup (Ready in 15 mins)
-  Ask for their delivery neighborhood/address (e.g. Quartier Bastos, Yaoundé).
-• STEP 4 (Review & Ask for Order Confirmation):
-  Summarize the complete order:
-  - 💊 **Medication:** [Drug Name] (Qty: X) - [OTC 🟢 or Rx Verified 📄]
-  - 🏪 **Pharmacy:** [Pharmacy Name & Location]
-  - 💰 **Medication Price:** [FCFA]
-  - 🛵 **Delivery Mode:** [Express Delivery / Pickup]
-  - 💳 **Total to Pay:** [Total FCFA]
-  - 📍 **Delivery Destination:** [Address]
-  - 💵 **Accepted Payments:** MTN MoMo, Orange Money, Cash on Delivery (Universal Digital Receipt Provided 🧾)
-  And ask at the end:
+MEDICATION ORDER WORKFLOW PROTOCOL:
+• STEP 1 (Drug): Ask which medication they need.
+• STEP 2 (Pharmacy Comparison & Rx Flag): Compare licensed pharmacies stocking it with prices.
+• STEP 3 (Fulfillment & Address): Ask for delivery address or pickup.
+• STEP 4 (Review & Confirmation): Summarize exact Drug, exact Pharmacy, exact Price, Address, and ask:
   "👉 **Do you confirm this order? (Please reply 'Yes' or 'Confirm' to place your order)**"
-• STEP 5 (Final Confirmation):
-  When they reply "Yes" or "Confirm", acknowledge and confirm the order!
 
-BE INTERACTIVE, PROFESSIONAL, AND EMPATHETIC AT ALL TIMES.`;
+BE EMPATHETIC, ACCURATE, NATURAL, AND METICULOUS AT ALL TIMES.`;
 
     if (apiKey && apiKey !== 'your_gemini_api_key') {
       try {
@@ -414,6 +585,10 @@ BE INTERACTIVE, PROFESSIONAL, AND EMPATHETIC AT ALL TIMES.`;
   getKnowledgeAwareFallback(msg, systemData, history = []) {
     const raw = (msg || '').trim();
     const lower = raw.toLowerCase();
+    const recentHistoryText = Array.isArray(history)
+      ? history.slice(-6).map(h => (h.text || h.content || '').toLowerCase()).join(' ')
+      : '';
+    const combinedContext = (lower + ' ' + recentHistoryText);
 
     // ───────────────── 1. GREETINGS & CASUAL CONVERSATION (HIGHEST PRIORITY) ─────
     const isGreeting = /^(hi|hello|hey|salut|bonjour|bonsoir|good morning|good afternoon|good evening|yo|coucou|hola)\b/i.test(lower) ||
@@ -421,12 +596,12 @@ BE INTERACTIVE, PROFESSIONAL, AND EMPATHETIC AT ALL TIMES.`;
       lower === 'how are you' || lower === 'how are you doing' || lower === 'ça va' || lower === 'ca va' || lower === 'comment tu vas';
 
     if (isGreeting) {
-      return `Hello there! 👋 How are you feeling today?\n\nI'm your **PharmaLink Clinical & Healthcare Assistant** 🩺. I'm here to help you naturally with anything you need:\n\n• 👨‍⚕️ **Book an appointment** with certified doctors & specialists across top hospitals.\n• 💊 **Order medications** with live pharmacy price comparisons (OTC & prescription).\n• 🌙 **24/7 Night Guard services** (pharmacies de garde & on-call emergency doctors).\n• 🧾 **Universal Digital Receipts** for all payments.\n• 🩺 **Clinical advice & symptom evaluation** for malaria, fevers, aches, and general health.\n\nTell me, what can I assist you with today?`;
+      return `Hello there! 👋 How are you feeling today?\n\nI'm your **PharmaLink Clinical & Healthcare Assistant** 🩺. I'm here to assist you naturally with:\n\n• 👨‍⚕️ **Booking an appointment** with certified doctors at your preferred hospital and exact time slot.\n• 💊 **Ordering medications** with real-time pharmacy price comparisons (OTC & prescription).\n• 🌙 **24/7 Night Guard services** (pharmacies de garde & on-call emergency doctors).\n• 🧾 **Universal Digital Receipts** for all payments.\n• 🩺 **Clinical advice & symptom evaluation** for malaria, fevers, aches, and general health.\n\nWhat can I help you with today?`;
     }
 
     // Casual "how does it work" / "who are you"
     if (lower.includes('who are you') || lower.includes('what can you do') || lower.includes('qui es tu') || lower.includes('que peux tu faire') || lower.includes('help me') || lower === 'help') {
-      return `I'm **PharmaLink's AI Health Agent** 🩺, designed specifically for healthcare patients in Cameroon!\n\nHere is how I can make healthcare simple for you:\n1. 🏥 **Find & Book Doctors:** Pick a hospital (Hôpital Central, CHU, Bastos, etc.) and specialist for In-Person or Telemedicine video calls.\n2. 💊 **Compare & Order Drugs:** Compare real-time pharmacy prices and get express courier delivery to your doorstep.\n3. 🌙 **Night Emergency Support:** Access on-call doctors and 24/7 guard pharmacies anytime.\n4. 🧾 **Payment Receipts:** Every order (MTN MoMo, Orange Money, Cash) gets an official digital receipt in your dashboard.\n\nFeel free to ask me any question or tell me what you'd like to do!`;
+      return `I'm **PharmaLink's AI Health Agent** 🩺, designed specifically for healthcare patients in Cameroon!\n\nHere is how I can make healthcare simple for you:\n1. 🏥 **Find & Book Doctors:** Pick a hospital (Hôpital Central, CHU, Bastos, etc.) and specialist for In-Person or Telemedicine video calls at your preferred time.\n2. 💊 **Compare & Order Drugs:** Compare real-time pharmacy prices and get express courier delivery to your doorstep.\n3. 🌙 **Night Emergency Support:** Access on-call doctors and 24/7 guard pharmacies anytime.\n4. 🧾 **Payment Receipts:** Every order (MTN MoMo, Orange Money, Cash) gets an official digital receipt in your dashboard.\n\nFeel free to ask me any question or tell me what you'd like to do!`;
     }
 
     // ───────────────── 2. NIGHT GUARD & 24/7 EMERGENCY CHECKS ─────
@@ -442,103 +617,92 @@ BE INTERACTIVE, PROFESSIONAL, AND EMPATHETIC AT ALL TIMES.`;
     }
 
     // ───────────────── 4. COMMON CLINICAL SYMPTOM & MEDICAL GUIDANCE ─────
-    // Malaria / Paludisme
     if (lower.includes('malaria') || lower.includes('palu') || lower.includes('paludisme') || lower.includes('coartem') || lower.includes('artemether') || lower.includes('fever and chills')) {
       return `🦟 **Malaria (Paludisme) Guidance & Treatment**\n\n**Common Symptoms:** High fever, chills, sweating, headaches, fatigue, muscle aches, nausea.\n\n💊 **Standard Recommended Treatment (Cameroon National Protocol):**\n• **First-Line Therapy:** Artemisinin-based Combination Therapy (ACT) such as **Coartem (Artemether-Lumefantrine 20/120mg)**.\n• **Dosage:** 1 course taken with food/milk over 3 days exactly as prescribed.\n• **Fever Management:** **Paracetamol 500mg - 1g** every 6-8 hours (max 4g/day) to bring down high body temperature.\n\n⚠️ **Important Medical Advice:**\n• It is strongly advised to perform a **Malaria Rapid Diagnostic Test (RDT)** or blood smear at a lab or hospital to confirm before taking antimalarials.\n• If symptoms persist after 48 hours or if there is vomiting, consult a doctor immediately.\n\n*Would you like me to compare pharmacy prices for Coartem, or book a consultation with a doctor?*`;
     }
 
-    // Headache / Fever / Pain
     if (lower.includes('headache') || lower.includes('mal de tete') || lower.includes('mal de tête') || lower.includes('fever') || lower.includes('fièvre') || lower.includes('pain') || lower.includes('douleur') || lower.includes('paracetamol')) {
       return `💊 **Headache, Fever & Pain Guidance**\n\n**First-Line Relief (Over-The-Counter):**\n• **Paracetamol (Acetaminophen) 500mg to 1000mg:**\n  - Adults: 1 to 2 tablets (500mg-1g) every 6 to 8 hours as needed (Maximum 4,000mg / 4g in 24 hours).\n  - Children: Weight-based dosing (10-15 mg/kg per dose).\n• **Hydration & Rest:** Drink plenty of water and rest in a cool, quiet room.\n\n⚠️ **When to Seek Immediate Medical Attention:**\n• Sudden, very severe "thunderclap" headache.\n• High fever accompanied by stiff neck, confusion, or rash.\n• Fever lasting more than 3 consecutive days.\n\n*Would you like to order Paracetamol from a nearby pharmacy or consult a doctor?*`;
     }
 
-    // Antibiotics & Prescription Requirement Questions
     if (lower.includes('antibiotic') || lower.includes('antibiotique') || lower.includes('amoxicillin') || lower.includes('augmentin') || lower.includes('cipro') || lower.includes('prescription')) {
       return `📄 **Prescription Drug Guidelines & Antibiotics Policy**\n\nUnder Cameroon pharmaceutical regulations and WHO clinical safety standards:\n\n• **Prescription Required (📄):** Antibiotics (e.g. *Amoxicillin, Augmentin, Ciprofloxacin*), strong analgesics, hypertension and diabetes medications require a valid doctor's prescription.\n• **Why it's important:** Prevents antibiotic resistance, adverse drug interactions, and ensures you receive the correct diagnosis and therapeutic course.\n• **Over-The-Counter (🟢):** Pain relievers (Paracetamol, Ibuprofen), ACT Antimalarials (Coartem), antacids, and vitamins can be ordered without a prescription.\n\n*Need a prescription? I can help you schedule a quick In-Person or Telemedicine consultation with a certified doctor right now!*`;
     }
 
-    // Blood Pressure / Hypertension
-    if (lower.includes('blood pressure') || lower.includes('hypertension') || lower.includes('tension') || lower.includes('amlodipine') || lower.includes('lisinopril')) {
-      return `🩺 **Hypertension & Blood Pressure Care**\n\n**Healthy Adult Reference:** Below 120/80 mmHg.\n\n**Key Health Recommendations:**\n• Monitor your blood pressure regularly and log measurements.\n• Maintain a balanced, low-sodium (low-salt) diet rich in vegetables and hydration.\n• Regular physical activity (30 mins walking daily).\n• Never stop prescribed antihypertensive drugs without consulting your cardiologist or physician.\n\n*Would you like to schedule an appointment with a Cardiologist (e.g. Dr. Marie Ngo)?*`;
-    }
-
     // ───────────────── 5. STEP-BY-STEP APPOINTMENT FLOW ─────────────────────────
     const isAppointmentIntent = lower.includes('appointment') || lower.includes('rendez-vous') || lower.includes('consultation') || lower.includes('book doctor') || lower.includes('see doctor') || lower.includes('doctor');
-    const mentionsHospital = lower.includes('central') || lower.includes('chu') || lower.includes('général') || lower.includes('bastos') || lower.includes('laquintinie') || lower.includes('jamot') || lower.includes('hopital') || lower.includes('hôpital');
-    const mentionsDoctor = lower.includes('amadou') || lower.includes('ngo') || lower.includes('kamdem') || lower.includes('fotso') || lower.includes('ebanda') || lower.includes('cardio') || lower.includes('pediat') || lower.includes('derma') || lower.includes('gynec') || lower.includes('general');
-    const mentionsTime = lower.includes('tomorrow') || lower.includes('demain') || lower.includes('am') || lower.includes('pm') || lower.includes('09') || lower.includes('10') || lower.includes('11') || lower.includes('14') || lower.includes('15') || lower.includes('slot') || lower.includes('telemedicine') || lower.includes('video') || lower.includes('in-person');
+    const mentionsHospital = combinedContext.includes('central') || combinedContext.includes('chu') || combinedContext.includes('général') || combinedContext.includes('general') || combinedContext.includes('bastos') || combinedContext.includes('laquintinie') || combinedContext.includes('jamot') || combinedContext.includes('hopital') || combinedContext.includes('hôpital');
+    const mentionsDoctor = combinedContext.includes('amadou') || combinedContext.includes('ngo') || combinedContext.includes('kamdem') || combinedContext.includes('fotso') || combinedContext.includes('ebanda') || combinedContext.includes('cardio') || combinedContext.includes('pediat') || combinedContext.includes('derma') || combinedContext.includes('gynec');
+    const timeParsed = this.parseAppointmentDateTime(lower, recentHistoryText);
+    const mentionsTime = timeParsed.hasExplicitTime || lower.includes('tomorrow') || lower.includes('demain') || lower.includes('slot') || lower.includes('morning') || lower.includes('afternoon') || lower.includes('am') || lower.includes('pm') || lower.includes('09') || lower.includes('10') || lower.includes('11') || lower.includes('14') || lower.includes('15') || lower.includes('telemedicine') || lower.includes('video') || lower.includes('in-person');
 
     // Appointment Step 1: User indicates appointment intent without specific hospital/doctor
     if (isAppointmentIntent && !mentionsHospital && !mentionsDoctor) {
-      return `🏥 **Step 1 of 4: Choose Your Preferred Hospital / Clinic**\n\nI'd be glad to help you schedule a consultation! Which medical facility would you prefer?\n\n1. 🏥 **Hôpital Central de Yaoundé** (General, Internal Med, Gynecology)\n2. 🏥 **Centre Hospitalier Universitaire (CHU) Yaoundé** (Cardiology & Specialists)\n3. 🏥 **Clinique Bastos (Yaoundé)** (Private Practice & Cardiology)\n4. 🏥 **Hôpital Général de Yaoundé** (Pediatrics & Multidisciplinary)\n5. 🏥 **Hôpital Laquintinie de Douala** (Dermatology & Emergency)\n\n*Please reply with your preferred hospital name or number to see available specialists.*`;
+      return `🏥 **Step 1 of 4: Choose Your Preferred Hospital / Clinic**\n\nI'd be glad to help you schedule a consultation! Which medical facility would you prefer?\n\n1. 🏥 **Hôpital Central de Yaoundé** (General Medicine, Urgent Care, OB/GYN)\n2. 🏥 **Centre Hospitalier Universitaire (CHU) Yaoundé** (Cardiology & Specialists)\n3. 🏥 **Clinique Bastos (Yaoundé)** (Cardiology & Private Practice)\n4. 🏥 **Hôpital Général de Yaoundé** (Pediatrics & Multidisciplinary)\n5. 🏥 **Hôpital Laquintinie de Douala** (Dermatology & Emergency)\n\n*Please reply with your preferred hospital name or number to see available specialists.*`;
     }
 
     // Appointment Step 2: Hospital chosen, list doctors
-    if ((mentionsHospital && !mentionsDoctor) || (isAppointmentIntent && mentionsHospital)) {
+    if ((mentionsHospital && !mentionsDoctor) || (isAppointmentIntent && mentionsHospital && !mentionsDoctor)) {
       let hospitalName = 'Hôpital Central de Yaoundé';
-      if (lower.includes('chu')) hospitalName = 'CHU Yaoundé';
-      else if (lower.includes('bastos')) hospitalName = 'Clinique Bastos';
-      else if (lower.includes('général') || lower.includes('general')) hospitalName = 'Hôpital Général de Yaoundé';
-      else if (lower.includes('laquintinie')) hospitalName = 'Hôpital Laquintinie de Douala';
+      let doctorsAtHospital = '• **Dr. Amadou** — *General Medicine & Urgent Care (24/7 On-Call)*\n• **Dr. Joseph Ebanda** — *Gynecology & Obstetrics*';
 
-      return `👨‍⚕️ **Step 2 of 4: Select a Specialist at ${hospitalName}**\n\nHere are the available certified specialists at this facility:\n\n• **Dr. Amadou** — *General Medicine & Urgent Care (24/7 On-Call)*\n• **Dr. Joseph Ebanda** — *Gynecology & Obstetrics*\n• **Dr. Marie Ngo** — *Cardiology & Cardiovascular Health*\n• **Dr. Pierre Kamdem** — *Pediatrics & Child Health*\n\n*Which doctor or specialty would you like to consult with?*`;
-    }
-
-    // Appointment Step 3: Doctor chosen, show schedule and slots
-    if (mentionsDoctor && !mentionsTime) {
-      let docName = 'Dr. Amadou';
-      let specialty = 'General Medicine';
-      let schedule = 'Monday to Friday: 08:00 AM – 03:30 PM | Saturday: 09:00 AM – 01:00 PM';
-      let slots = '• Slot 1: Tomorrow at 09:00 AM\n• Slot 2: Tomorrow at 11:30 AM\n• Slot 3: Tomorrow at 02:30 PM';
-
-      if (lower.includes('ngo') || lower.includes('cardio')) {
-        docName = 'Dr. Marie Ngo';
-        specialty = 'Cardiology';
-        schedule = 'Tuesday & Thursday: 09:00 AM – 04:00 PM | Friday: 10:00 AM – 02:00 PM';
-        slots = '• Slot 1: Thursday at 09:30 AM\n• Slot 2: Thursday at 11:00 AM\n• Slot 3: Friday at 10:30 AM';
-      } else if (lower.includes('kamdem') || lower.includes('pediat')) {
-        docName = 'Dr. Pierre Kamdem';
-        specialty = 'Pediatrics';
-        schedule = 'Monday to Friday: 08:30 AM – 04:00 PM';
-        slots = '• Slot 1: Tomorrow at 09:00 AM\n• Slot 2: Tomorrow at 10:30 AM\n• Slot 3: Tomorrow at 02:00 PM';
+      if (combinedContext.includes('chu')) {
+        hospitalName = 'CHU Yaoundé';
+        doctorsAtHospital = '• **Dr. Marie Ngo** — *Cardiology & Cardiovascular Health*';
+      } else if (combinedContext.includes('bastos')) {
+        hospitalName = 'Clinique Bastos';
+        doctorsAtHospital = '• **Dr. Marie Ngo** — *Cardiology & Cardiovascular Health*';
+      } else if (combinedContext.includes('général') || combinedContext.includes('general')) {
+        hospitalName = 'Hôpital Général de Yaoundé';
+        doctorsAtHospital = '• **Dr. Pierre Kamdem** — *Pediatrics & Child Health*';
+      } else if (combinedContext.includes('laquintinie')) {
+        hospitalName = 'Hôpital Laquintinie de Douala';
+        doctorsAtHospital = '• **Dr. Estelle Fotso** — *Dermatology & Skin Health*';
       }
 
-      return `📅 **Step 3 of 4: Choose Date, Time Slot & Mode**\n\n**${docName}** (${specialty})\n• **Clinic Schedule:** ${schedule}\n\n**Upcoming Available Time Slots:**\n${slots}\n\n**Consultation Modes:**\n1. 🏥 **In-Person** (At the hospital clinic)\n2. 📱 **Telemedicine Video Call** (Directly in the PharmaLink app)\n\n*Which date, time slot, and consultation mode would you prefer?*`;
+      return `👨‍⚕️ **Step 2 of 4: Select a Specialist at ${hospitalName}**\n\nHere are the available certified specialists at this facility:\n\n${doctorsAtHospital}\n\n*Which doctor or specialty would you like to consult with?*`;
+    }
+
+    // Appointment Step 3: Doctor chosen, ask for exact date and time slot
+    if (mentionsDoctor && !mentionsTime) {
+      const targetDoctor = this.resolveDoctor(lower, recentHistoryText, systemData.doctors);
+      const docName = targetDoctor ? `Dr. ${targetDoctor.name.replace(/^Dr\.\s*/i, '')}` : 'Dr. Amadou';
+      const specialty = targetDoctor?.doctorProfile?.specialty || 'General Medicine';
+      const hospitalName = targetDoctor?.doctorProfile?.hospital || 'Partner Hospital';
+
+      return `📅 **Step 3 of 4: Choose Your Date, Time Slot & Mode**\n\n**${docName}** (${specialty} at ${hospitalName})\n\n**Available Time Slots for Tomorrow & This Week:**\n• **Slot 1:** 09:00 AM\n• **Slot 2:** 11:30 AM\n• **Slot 3:** 02:30 PM\n• *Or tell me any specific date and time that works best for you!*\n\n**Consultation Modes:**\n1. 🏥 **In-Person** (At ${hospitalName})\n2. 📱 **Telemedicine Video Call** (In PharmaLink app)\n\n*What date, specific time slot (e.g. Tomorrow at 09:00 AM, Friday at 02:30 PM), and consultation mode would you prefer?*`;
     }
 
     // Appointment Step 4: Time slot chosen, review summary
-    if (mentionsTime && (mentionsDoctor || lower.includes('in-person') || lower.includes('telemedicine') || lower.includes('video') || lower.includes('slot'))) {
-      const mode = (lower.includes('telemedicine') || lower.includes('video') || lower.includes('en ligne')) ? '📱 Telemedicine Video Call' : '🏥 In-Person at Hospital';
-      return `📋 **Step 4 of 4: Review Your Consultation Summary**\n\n• **Hospital:** 🏥 Hôpital Central de Yaoundé\n• **Specialist:** 👨‍⚕️ **Dr. Amadou** (General Medicine)\n• **Date & Time:** 📅 Tomorrow at 10:00 AM\n• **Consultation Mode:** ${mode}\n• **Dashboard Sync:** Automatically visible in your Patient Dashboard upcoming appointments with calendar reminders ✅\n• **Status:** Ready to Confirm\n\n👉 **Do you confirm this appointment? (Please reply 'Yes' or 'Confirm' to finalize your booking)**`;
+    if (mentionsTime && (mentionsDoctor || mentionsHospital || isAppointmentIntent)) {
+      const targetDoctor = this.resolveDoctor(lower, recentHistoryText, systemData.doctors);
+      const docName = targetDoctor ? `Dr. ${targetDoctor.name.replace(/^Dr\.\s*/i, '')}` : 'Dr. Amadou';
+      const specialty = targetDoctor?.doctorProfile?.specialty || 'General Medicine';
+      const hospitalName = targetDoctor?.doctorProfile?.hospital || 'Hôpital Central de Yaoundé';
+      const mode = (combinedContext.includes('telemedicine') || combinedContext.includes('video') || combinedContext.includes('en ligne')) ? '📱 Telemedicine Video Call' : '🏥 In-Person at Hospital';
+      const formattedTime = timeParsed.formatted;
+
+      return `📋 **Step 4 of 4: Review Your Consultation Summary**\n\n• **Hospital / Clinic:** 🏥 **${hospitalName}**\n• **Specialist:** 👨‍⚕️ **${docName}** (${specialty})\n• **Date & Time:** 📅 **${formattedTime}**\n• **Consultation Mode:** ${mode}\n• **Dashboard Sync:** Automatically visible in your Patient Dashboard upcoming appointments with calendar reminders ✅\n• **Status:** Ready to Confirm\n\n👉 **Do you confirm this appointment? (Please reply 'Yes' or 'Confirm' to finalize your booking)**`;
     }
 
     // ───────────────── 6. STEP-BY-STEP MEDICATION ORDER FLOW ───────────────────
     const isOrderIntent = lower.includes('order') || lower.includes('buy') || lower.includes('purchase') || lower.includes('commander') || lower.includes('acheter') || lower.includes('médicament') || lower.includes('delivery');
-    const mentionsDrug = lower.includes('paracetamol') || lower.includes('coartem') || lower.includes('amoxicillin') || lower.includes('ibuprofen') || lower.includes('metformin') || lower.includes('artemether') || lower.includes('lisinopril');
-    const mentionsPharmacy = lower.includes('centrale') || lower.includes('bastos') || lower.includes('soleil') || lower.includes('pharmacie') || lower.includes('pharmacy');
-    const mentionsDelivery = lower.includes('delivery') || lower.includes('courier') || lower.includes('pickup') || lower.includes('livraison') || lower.includes('domicile') || lower.includes('yaoundé') || lower.includes('douala') || lower.includes('bastos quartier');
+    const mentionsDrug = combinedContext.includes('paracetamol') || combinedContext.includes('coartem') || combinedContext.includes('amoxicillin') || combinedContext.includes('augmentin') || combinedContext.includes('ibuprofen') || combinedContext.includes('metformin') || combinedContext.includes('lisinopril');
+    const mentionsPharmacy = combinedContext.includes('centrale') || combinedContext.includes('bastos') || combinedContext.includes('soleil') || combinedContext.includes('gare') || combinedContext.includes('pharmacie') || combinedContext.includes('pharmacy');
+    const mentionsDelivery = combinedContext.includes('delivery') || combinedContext.includes('courier') || combinedContext.includes('pickup') || combinedContext.includes('livraison') || combinedContext.includes('domicile') || combinedContext.includes('yaoundé') || combinedContext.includes('douala');
 
     // Order Step 1: User wants to order but hasn't specified drug
     if (isOrderIntent && !mentionsDrug) {
-      return `💊 **Step 1 of 4: What Medication Would You Like to Order?**\n\nI can compare prices across licensed pharmacies for you! Which medication are you looking for?\n\n*Popular in-stock items:*\n• **Paracetamol 500mg / 1g** — 🟢 [Over-the-Counter / OTC]\n• **Coartem (Artemether-Lumefantrine)** — 🟢 [Over-the-Counter / OTC]\n• **Amoxicillin 500mg** — 📄 [Prescription Required]\n• **Ibuprofen 400mg** — 🟢 [Over-the-Counter / OTC]\n• **Metformin 500mg** — 📄 [Prescription Required]\n\n*Please tell me the name of the medication you need!*`;
+      return `💊 **Step 1 of 4: What Medication Would You Like to Order?**\n\nI can compare prices across licensed pharmacies for you! Which medication are you looking for?\n\n*Popular in-stock items:*\n• **Paracetamol 500mg / 1g** — 🟢 [Over-the-Counter / OTC]\n• **Coartem (Artemether-Lumefantrine)** — 🟢 [Over-the-Counter / OTC]\n• **Amoxicillin 500mg** — 📄 [Prescription Required]\n• **Augmentin 1g** — 📄 [Prescription Required]\n• **Ibuprofen 400mg** — 🟢 [Over-the-Counter / OTC]\n• **Metformin 500mg** — 📄 [Prescription Required]\n\n*Please tell me the name of the medication you need!*`;
     }
 
     // Order Step 2: Drug mentioned, compare pharmacy prices
     if (mentionsDrug && !mentionsPharmacy) {
-      let drugName = 'Paracetamol 500mg';
-      let rxStatus = '🟢 Over-the-Counter (No prescription needed)';
-      if (lower.includes('coartem') || lower.includes('artemether')) {
-        drugName = 'Coartem (Artemether-Lumefantrine)';
-        rxStatus = '🟢 Over-the-Counter (No prescription needed)';
-      } else if (lower.includes('amoxicillin')) {
-        drugName = 'Amoxicillin 500mg';
-        rxStatus = '📄 Prescription Required (Doctor prescription needed)';
-      } else if (lower.includes('ibuprofen')) {
-        drugName = 'Ibuprofen 400mg';
-        rxStatus = '🟢 Over-the-Counter (No prescription needed)';
-      }
+      const { targetMed } = this.resolveMedicationAndPharmacy(lower, recentHistoryText, systemData.medications);
+      const drugName = targetMed?.name || 'Paracetamol 500mg';
+      const rxStatus = targetMed?.requiresPrescription ? '📄 Prescription Required (Doctor prescription needed)' : '🟢 Over-the-Counter (No prescription needed)';
 
-      return `🏪 **Step 2 of 4: Price Comparison for ${drugName}**\n*Classification:* ${rxStatus}\n\nHere are licensed pharmacies with verified stock (sorted cheapest first):\n\n1. 🏪 **Pharmacie Centrale** (Avenue Kennedy, Bastos)\n   • **Price:** FCFA 1,200 | Stock: 50 available ✅\n\n2. 🏪 **Pharmacie Bastos** (Rond-point Bastos)\n   • **Price:** FCFA 1,400 | Stock: 35 available ✅\n\n3. 🏪 **Pharmacie du Soleil** (Centre-ville)\n   • **Price:** FCFA 1,550 | Stock: 20 available ✅\n\n*Which pharmacy would you like to purchase from, and how many boxes (e.g. 1 box, 2 boxes)?*`;
+      return `🏪 **Step 2 of 4: Price Comparison for ${drugName}**\n*Classification:* ${rxStatus}\n\nHere are licensed pharmacies with verified stock (sorted cheapest first):\n\n1. 🏪 **Pharmacie Centrale** (Avenue Kennedy, Bastos)\n   • **Price:** FCFA 1,200 | Stock: 45 available ✅\n\n2. 🏪 **Pharmacie Bastos** (Rond-point Bastos - 24/7 Night Guard 🌙)\n   • **Price:** FCFA 1,350 | Stock: 50 available ✅\n\n3. 🏪 **Pharmacie du Soleil** (Centre-ville)\n   • **Price:** FCFA 1,500 | Stock: 55 available ✅\n\n4. 🏪 **Pharmacie de la Gare** (Avenue de la Gare - 24/7 Night Guard 🌙)\n   • **Price:** FCFA 1,650 | Stock: 60 available ✅\n\n*Which pharmacy would you like to purchase from, and how many boxes (e.g. Pharmacie Bastos, 1 box)?*`;
     }
 
     // Order Step 3: Pharmacy selected, ask for fulfillment
@@ -548,13 +712,21 @@ BE INTERACTIVE, PROFESSIONAL, AND EMPATHETIC AT ALL TIMES.`;
 
     // Order Step 4: Address provided, show order review
     if (mentionsDelivery || (mentionsPharmacy && mentionsDrug)) {
-      return `📋 **Step 4 of 4: Review Your Medication Order Summary**\n\n• **Medication:** 💊 **Paracetamol 500mg** (Qty: 1 box) - 🟢 [OTC Verified]\n• **Pharmacy:** 🏪 **Pharmacie Centrale** (Avenue Kennedy)\n• **Medication Price:** FCFA 1,200\n• **Fulfillment:** 🛵 Express Doorstep Courier (Quartier Bastos, Yaoundé)\n• **Courier Delivery Fee:** FCFA 1,000\n• **Total to Pay:** 💳 **FCFA 2,200**\n• **Accepted Payments:** MTN MoMo, Orange Money, Cash on Delivery\n• **Digital Receipt:** 🧾 Universal digital receipt generated instantly on confirmation\n\n👉 **Do you confirm this order? (Please reply 'Yes' or 'Confirm' to finalize your order)**`;
+      const { targetMed, quantity, address } = this.resolveMedicationAndPharmacy(lower, recentHistoryText, systemData.medications);
+      const medName = targetMed?.name || 'Paracetamol 500mg';
+      const pharmName = targetMed?.pharmacy?.pharmacyName || 'Pharmacie Centrale';
+      const unitPrice = parseFloat(targetMed?.priceFcfa || 1200);
+      const totalPrice = unitPrice * quantity;
+      const isPickup = combinedContext.includes('pickup') || combinedContext.includes('retrait');
+
+      return `📋 **Step 4 of 4: Review Your Medication Order Summary**\n\n• **Medication:** 💊 **${medName}** (Qty: ${quantity} box) - ${targetMed?.requiresPrescription ? '📄 [Rx Required]' : '🟢 [OTC Verified]'}\n• **Pharmacy:** 🏪 **${pharmName}**\n• **Medication Price:** FCFA ${totalPrice.toLocaleString()}\n• **Fulfillment:** ${isPickup ? '🚶 Pharmacy Counter Pickup' : `🛵 Express Doorstep Courier (${address})`}\n• **Total to Pay:** 💳 **FCFA ${totalPrice.toLocaleString()}**\n• **Accepted Payments:** MTN MoMo, Orange Money, Credit Card, Cash on Delivery\n• **Digital Receipt:** 🧾 Universal digital receipt generated instantly on confirmation\n\n👉 **Do you confirm this order? (Please reply 'Yes' or 'Confirm' to finalize your order)**`;
     }
 
     // ───────────────── 7. DEFAULT FRIENDLY CATCH-ALL ───────────────────────────
-    return `I'm here to assist you! 🩺\n\nFeel free to ask me about:\n• **Booking an appointment** (Step-by-step with your preferred hospital & specialist).\n• **Ordering medications** (With live pharmacy price comparisons).\n• **24/7 Night Guard services** (Pharmacies and on-call doctors).\n• **Symptoms or health questions** (Malaria, fevers, aches, prescriptions).\n\nWhat would you like to do?`;
+    return `I'm here to assist you! 🩺\n\nFeel free to ask me about:\n• **Booking an appointment** (With your chosen hospital, doctor, and exact time slot).\n• **Ordering medications** (With live pharmacy price comparisons).\n• **24/7 Night Guard services** (Pharmacies and on-call doctors).\n• **Symptoms or health questions** (Malaria, fevers, aches, prescriptions).\n\nWhat would you like to do?`;
   }
 }
 
 module.exports = new GeminiService();
+
 
