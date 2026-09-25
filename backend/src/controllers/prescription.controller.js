@@ -240,10 +240,27 @@ const getMyPrescriptions = async (req, res, next) => {
       }
     }
 
-    const enriched = prescriptions.map(p => ({
-      ...p,
-      pharmacyDetails: p.pharmacistId ? (pharmacyMap[p.pharmacistId] || null) : null,
-    }));
+    const enriched = prescriptions.map(p => {
+      let parsed = {};
+      try {
+        parsed = JSON.parse(p.notes || '{}');
+      } catch (_) {
+        parsed = { rawNotes: p.notes };
+      }
+
+      const validationStatus = parsed.validationStatus || (p.status === 'fulfilled' ? 'approved' : (p.status === 'sent_to_pharmacy' ? 'pending' : (p.status === 'issued' ? 'issued' : p.status)));
+
+      return {
+        ...p,
+        validationStatus,
+        documentUrl: parsed.documentUrl || null,
+        doctorName: parsed.doctorName || (p.doctor ? `Dr. ${p.doctor.name}` : 'Attending Physician'),
+        hospital: parsed.hospital || p.doctor?.doctorProfile?.hospital || 'Partner Hospital / Clinic',
+        rejectionReason: parsed.rejectionReason || null,
+        patientNotes: parsed.patientNotes || parsed.clientNotes || null,
+        pharmacyDetails: p.pharmacistId ? (pharmacyMap[p.pharmacistId] || null) : null,
+      };
+    });
 
     res.json({ success: true, data: enriched });
   } catch (err) {
@@ -698,14 +715,333 @@ const getLabRequests = async (req, res, next) => {
   }
 };
 
+// Patient uploads physical doctor prescription (image/PDF) and sends to pharmacy for validation & order creation
+const uploadAndSend = async (req, res, next) => {
+  try {
+    const patientId = req.user.id;
+    let documentUrl = null;
+
+    if (req.file) {
+      documentUrl = `/uploads/${req.file.filename}`;
+    } else if (req.body.documentUrl) {
+      documentUrl = req.body.documentUrl;
+    } else if (req.body.documentBase64) {
+      const fs = require('fs');
+      const path = require('path');
+      const base64Data = req.body.documentBase64.replace(/^data:\w+\/\w+;base64,/, '');
+      const filename = `rx_${Date.now()}_${patientId.slice(0, 6)}.png`;
+      const uploadDir = path.join(__dirname, '../../uploads');
+      if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+      fs.writeFileSync(path.join(uploadDir, filename), base64Data, 'base64');
+      documentUrl = `/uploads/${filename}`;
+    }
+
+    const {
+      pharmacyId,
+      doctorName = 'External Attending Physician',
+      hospital = 'General Hospital / Partner Clinic',
+      notes,
+      orderType = 'pickup',
+      deliveryAddress,
+      deliveryLat,
+      deliveryLng,
+    } = req.body;
+
+    if (!pharmacyId) {
+      return res.status(400).json({ success: false, message: 'Target pharmacyId is required' });
+    }
+
+    let items = req.body.items;
+    if (typeof items === 'string') {
+      try { items = JSON.parse(items); } catch (_) { items = [{ medicationName: items }]; }
+    }
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      items = [{ medicationName: 'Prescribed Medications (See attached Rx document)', dosage: 'As directed', instructions: 'Per prescription', durationDays: 7 }];
+    }
+
+    // Find pharmacy profile and titular pharmacist user
+    const pharmacyProfile = await prisma.pharmacistProfile.findUnique({
+      where: { id: pharmacyId },
+      include: { user: true, medications: true },
+    });
+
+    if (!pharmacyProfile) {
+      return res.status(404).json({ success: false, message: 'Selected pharmacy not found' });
+    }
+
+    // Doctor reference
+    let doctorId = req.body.doctorId;
+    if (!doctorId) {
+      const firstDoctor = await prisma.user.findFirst({ where: { role: 'doctor' } });
+      doctorId = firstDoctor?.id || req.user.id;
+    }
+
+    const metadata = {
+      documentUrl,
+      doctorName,
+      hospital,
+      validationStatus: 'pending',
+      validationReason: null,
+      orderType,
+      deliveryAddress: deliveryAddress || 'Yaoundé, Cameroon',
+      patientNotes: notes || '',
+      uploadedAt: new Date().toISOString(),
+    };
+
+    // 1. Create the Prescription record
+    const prescription = await prisma.prescription.create({
+      data: {
+        doctorId,
+        patientId,
+        pharmacistId: pharmacyProfile.userId,
+        status: 'sent_to_pharmacy',
+        notes: JSON.stringify(metadata),
+        items: {
+          create: items.map(i => ({
+            medicationName: i.medicationName || 'Prescribed Drug',
+            dosage: i.dosage || '1 dose',
+            instructions: i.instructions || 'Per Doctor Rx',
+            durationDays: parseInt(i.durationDays, 10) || 7,
+          })),
+        },
+      },
+      include: {
+        items: true,
+        patient: { select: { name: true, phone: true, email: true } },
+        doctor: { select: { name: true, phone: true } },
+      },
+    });
+
+    // 2. Match inventory medications to calculate order total
+    let totalFcfa = 0;
+    const orderItemsData = [];
+    const availableMeds = pharmacyProfile.medications || [];
+
+    for (const pItem of items) {
+      const pNameLower = (pItem.medicationName || '').toLowerCase();
+      const matched = availableMeds.find(m => m.name.toLowerCase().includes(pNameLower) || pNameLower.includes(m.name.toLowerCase())) || availableMeds[0];
+
+      if (matched) {
+        const unitPrice = parseFloat(matched.priceFcfa || 1500);
+        totalFcfa += unitPrice;
+        orderItemsData.push({
+          medicationId: matched.id,
+          quantity: 1,
+          unitPriceFcfa: unitPrice,
+        });
+      }
+    }
+    if (totalFcfa === 0) totalFcfa = 2500; // default initial estimate until pharmacist validates
+
+    const otp = Math.floor(1000 + Math.random() * 9000).toString();
+    const pickupCode = orderType === 'pickup' ? `PK-${Math.floor(1000 + Math.random() * 9000)}` : null;
+
+    // 3. Create the linked Order in 'pending' status requiring pharmacist validation
+    const order = await prisma.order.create({
+      data: {
+        patientId,
+        pharmacyId: pharmacyProfile.id,
+        orderType: orderType === 'delivery' ? 'delivery' : 'pickup',
+        status: 'pending',
+        totalFcfa,
+        deliveryAddress: deliveryAddress || (orderType === 'pickup' ? 'Pharmacy Counter Pickup' : 'Yaoundé, Cameroon'),
+        deliveryLat: deliveryLat ? parseFloat(deliveryLat) : (pharmacyProfile.lat || 3.8480),
+        deliveryLng: deliveryLng ? parseFloat(deliveryLng) : (pharmacyProfile.lng || 11.5021),
+        pickupCode: pickupCode || `OTP-${otp}`,
+        otp,
+        items: {
+          create: orderItemsData.length > 0 ? orderItemsData : (availableMeds[0] ? [{ medicationId: availableMeds[0].id, quantity: 1, unitPriceFcfa: availableMeds[0].priceFcfa }] : []),
+        },
+      },
+      include: {
+        items: { include: { medication: true } },
+        pharmacy: true,
+      },
+    });
+
+    // 4. Send high-priority notification to Pharmacist
+    await notificationService.send(
+      pharmacyProfile.userId,
+      '📄 New Prescription Uploaded — Validation Required',
+      `Patient ${req.user.name || 'Patient'} uploaded a doctor's prescription for ${pharmacyProfile.pharmacyName}. Please review and validate the document before order fulfillment.`,
+      'prescription'
+    ).catch(() => {});
+
+    const { emitToUser, emitToRole } = require('../services/socket.service');
+    emitToUser(pharmacyProfile.userId, 'prescription:validation_pending', { prescription, order });
+    emitToRole('pharmacist', 'prescription:validation_pending', { prescription, order });
+
+    res.status(201).json({
+      success: true,
+      message: 'Prescription uploaded and sent to pharmacist for validation.',
+      data: {
+        prescription,
+        order,
+        validationStatus: 'pending',
+        pharmacy: pharmacyProfile,
+      },
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// Pharmacist validates (Approves or Rejects) a prescription
+const validatePrescription = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const { action, reason, notes: pharmacistNotes } = req.body; // action: 'approve' | 'reject'
+
+    const prescription = await prisma.prescription.findUnique({
+      where: { id },
+      include: {
+        patient: { select: { id: true, name: true, phone: true } },
+        items: true,
+      },
+    });
+
+    if (!prescription) {
+      return res.status(404).json({ success: false, message: 'Prescription not found' });
+    }
+
+    let parsed = {};
+    try {
+      parsed = JSON.parse(prescription.notes || '{}');
+    } catch (_) {
+      parsed = { rawNotes: prescription.notes };
+    }
+
+    const pharmacistUser = req.user;
+    const pharmacyProfile = await prisma.pharmacistProfile.findUnique({
+      where: { userId: pharmacistUser.id },
+    });
+    const pharmacyName = pharmacyProfile?.pharmacyName || 'Pharmacie';
+
+    if (action === 'approve') {
+      parsed.validationStatus = 'approved';
+      parsed.validatedAt = new Date().toISOString();
+      parsed.validatedBy = pharmacistUser.name || 'Pharmacist';
+      parsed.pharmacistNotes = pharmacistNotes || 'Verified & approved by licensed pharmacist';
+
+      const updatedPrescription = await prisma.prescription.update({
+        where: { id },
+        data: {
+          status: 'approved',
+          notes: JSON.stringify(parsed),
+        },
+        include: { items: true, patient: true },
+      });
+
+      // Find and confirm any linked pending order
+      const pendingOrder = await prisma.order.findFirst({
+        where: {
+          patientId: prescription.patientId,
+          pharmacyId: pharmacyProfile?.id || undefined,
+          status: 'pending',
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      let updatedOrder = null;
+      if (pendingOrder) {
+        updatedOrder = await prisma.order.update({
+          where: { id: pendingOrder.id },
+          data: { status: 'confirmed' },
+          include: { items: { include: { medication: true } }, pharmacy: true },
+        });
+      }
+
+      // Send high-priority notification to patient
+      await notificationService.send(
+        prescription.patientId,
+        '✅ Prescription Validated by Pharmacist!',
+        `${pharmacyName} has verified and APPROVED your prescription. Your medication is approved for payment and preparation.`,
+        'prescription'
+      ).catch(() => {});
+
+      const { emitToUser } = require('../services/socket.service');
+      emitToUser(prescription.patientId, 'prescription:approved', { prescription: updatedPrescription, order: updatedOrder });
+
+      return res.json({
+        success: true,
+        message: 'Prescription validated and approved successfully.',
+        data: {
+          prescription: updatedPrescription,
+          order: updatedOrder,
+          validationStatus: 'approved',
+        },
+      });
+    } else if (action === 'reject') {
+      parsed.validationStatus = 'rejected';
+      parsed.rejectedAt = new Date().toISOString();
+      parsed.rejectedBy = pharmacistUser.name || 'Pharmacist';
+      parsed.rejectionReason = reason || 'Prescription document is invalid, illegible, or expired';
+
+      const updatedPrescription = await prisma.prescription.update({
+        where: { id },
+        data: {
+          status: 'cancelled',
+          notes: JSON.stringify(parsed),
+        },
+        include: { items: true, patient: true },
+      });
+
+      // Cancel any pending linked order
+      const pendingOrder = await prisma.order.findFirst({
+        where: {
+          patientId: prescription.patientId,
+          pharmacyId: pharmacyProfile?.id || undefined,
+          status: 'pending',
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      if (pendingOrder) {
+        await prisma.order.update({
+          where: { id: pendingOrder.id },
+          data: { status: 'cancelled' },
+        }).catch(() => {});
+      }
+
+      // Notify patient with exact reason
+      await notificationService.send(
+        prescription.patientId,
+        '❌ Prescription Verification Failed',
+        `${pharmacyName} could not validate your prescription: ${parsed.rejectionReason}. Please upload a clearer document or consult a doctor.`,
+        'prescription'
+      ).catch(() => {});
+
+      const { emitToUser } = require('../services/socket.service');
+      emitToUser(prescription.patientId, 'prescription:rejected', { prescription: updatedPrescription, reason: parsed.rejectionReason });
+
+      return res.json({
+        success: true,
+        message: 'Prescription has been marked as rejected.',
+        data: {
+          prescription: updatedPrescription,
+          validationStatus: 'rejected',
+          reason: parsed.rejectionReason,
+        },
+      });
+    } else {
+      return res.status(400).json({ success: false, message: 'Invalid action. Must be "approve" or "reject".' });
+    }
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = {
   issue,
   getMyPrescriptions,
   sendToPharmacy,
+  uploadAndSend,
+  validatePrescription,
   fulfill,
   getMedicalHistory,
   requestLabAnalysis,
   submitLabResults,
   getLabRequests,
 };
+
 

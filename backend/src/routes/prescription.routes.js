@@ -2,12 +2,15 @@ const router = require('express').Router();
 const ctrl = require('../controllers/prescription.controller');
 const { authenticate } = require('../middleware/auth.middleware');
 const { authorize } = require('../middleware/role.middleware');
+const upload = require('../middleware/upload.middleware');
 
 // Standard Consultations & Prescriptions
 router.post('/',                      authenticate, authorize('doctor'), ctrl.issue);
 router.post('/consultation',          authenticate, authorize('doctor'), ctrl.issue);
+router.post('/upload-and-send',        authenticate, authorize('patient', 'admin'), upload.single('prescription'), ctrl.uploadAndSend);
 router.get('/',                       authenticate, ctrl.getMyPrescriptions);
 router.patch('/:id/send-to-pharmacy', authenticate, authorize('patient', 'doctor', 'admin'), ctrl.sendToPharmacy);
+router.patch('/:id/validate',         authenticate, authorize('pharmacist', 'admin'), ctrl.validatePrescription);
 router.patch('/:id/fulfill',          authenticate, authorize('pharmacist'), ctrl.fulfill);
 router.get('/medical-history',        authenticate, ctrl.getMedicalHistory);
 
@@ -17,3 +20,4 @@ router.post('/lab-results/:historyId', authenticate, authorize('patient'), ctrl.
 router.get('/lab-requests',            authenticate, ctrl.getLabRequests);
 
 module.exports = router;
+
