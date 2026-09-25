@@ -1,9 +1,11 @@
 const axios = require('axios');
 const prisma = require('../config/db');
+const notificationService = require('./notification.service');
 
 /**
- * PharmaLink Gemini AI Medical & Health Advisory Service
- * System-Aware Agent: Real-time Doctors, Hospitals, Pharmacy Prices, and Appointments
+ * PharmaLink Autonomous AI Clinical Agent
+ * Powered by Google Gemini 1.5 Flash
+ * Capabilities: Live System Knowledge, Direct Appointment Booking, and Medication Orders
  */
 class GeminiService {
   constructor() {
@@ -20,7 +22,6 @@ class GeminiService {
    */
   async getSystemKnowledge() {
     try {
-      // 1. Fetch certified doctors
       const doctors = await prisma.user.findMany({
         where: { role: 'doctor', isActive: true },
         include: { doctorProfile: true },
@@ -30,11 +31,10 @@ class GeminiService {
       const doctorsList = doctors.length > 0
         ? doctors.map(d => {
             const p = d.doctorProfile || {};
-            return `• Dr. ${d.name.replace(/^Dr\.\s*/i, '')} | Specialty: ${p.specialty || 'General Medicine'} | Hospital: ${p.hospital || 'Hôpital Central de Yaoundé'} | Status: Verified ONMC`;
+            return `• Dr. ${d.name.replace(/^Dr\.\s*/i, '')} (ID: ${d.id}) | Specialty: ${p.specialty || 'General Medicine'} | Hospital: ${p.hospital || 'Hôpital Central de Yaoundé'} | Status: Verified ONMC`;
           }).join('\n')
-        : '• Dr. Amadou | Specialty: General Practitioner | Hospital: Hôpital Central de Yaoundé\n• Dr. Marie Nguema | Specialty: Pediatrics & Cardiology | Hospital: Clinique Bastos, Yaoundé';
+        : '• Dr. Amadou | Specialty: General Practitioner | Hospital: Hôpital Central de Yaoundé';
 
-      // 2. Fetch medications sorted by cheapest price first
       const medications = await prisma.medication.findMany({
         include: { pharmacy: true },
         take: 40,
@@ -45,33 +45,159 @@ class GeminiService {
         ? medications.map(m => {
             const ph = m.pharmacy?.pharmacyName || 'Pharmacie Centrale';
             const addr = m.pharmacy?.pharmacyAddress || 'Yaoundé';
-            return `• ${m.name}: FCFA ${m.priceFcfa} at "${ph}" (${addr}) - Stock: ${m.stockQuantity} available`;
+            return `• ${m.name} (ID: ${m.id}): FCFA ${m.priceFcfa} at "${ph}" (${addr}) - Stock: ${m.stockQuantity} available`;
           }).join('\n')
-        : '• Paracetamol 500mg: FCFA 1,200 at Pharmacie Centrale (Avenue Kennedy)\n• Coartem (Artemether-Lumefantrine): FCFA 2,200 at Pharmacie Bastos\n• Amoxicillin 500mg: FCFA 2,500 at Pharmacie Centrale';
+        : '• Paracetamol 500mg: FCFA 1,200 at Pharmacie Centrale (Avenue Kennedy)\n• Coartem (Artemether-Lumefantrine): FCFA 2,200 at Pharmacie Bastos';
 
-      return {
-        doctorsText: doctorsList,
-        medicationsText: medicationsList,
-        doctors,
-        medications,
-      };
+      return { doctorsText: doctorsList, medicationsText: medicationsList, doctors, medications };
     } catch (e) {
       console.warn('[Gemini Service] Could not query live DB directory:', e.message);
-      return {
-        doctorsText: '• Dr. Amadou (General Practitioner at Hôpital Central de Yaoundé)',
-        medicationsText: '• Paracetamol 500mg (FCFA 1,200 at Pharmacie Centrale)',
-        doctors: [],
-        medications: [],
-      };
+      return { doctorsText: '', medicationsText: '', doctors: [], medications: [] };
     }
   }
 
   /**
-   * Interactive System-Aware Health Assistant Chat
+   * Executes autonomous agent actions (Book Appointment or Create Drug Order)
    */
-  async chat(userMessage, context = '', history = []) {
+  async handleAgentActions(userMessage, currentUser, systemData) {
+    const lower = (userMessage || '').toLowerCase();
+    const userId = currentUser?.id;
+
+    // ─── ACTION 1: BOOK APPOINTMENT INTENT ──────────────────────────────────────
+    const isBookingIntent = (
+      (lower.includes('book') || lower.includes('set') || lower.includes('make') || lower.includes('schedule') || lower.includes('prendre')) &&
+      (lower.includes('appointment') || lower.includes('rendez-vous') || lower.includes('consultation') || lower.includes('doctor') || lower.includes('dr'))
+    );
+
+    if (isBookingIntent && userId && systemData.doctors.length > 0) {
+      // Find matching doctor or pick first certified doctor
+      let targetDoctor = systemData.doctors.find(d =>
+        lower.includes(d.name.toLowerCase().replace('dr.', '').trim())
+      );
+      if (!targetDoctor) {
+        targetDoctor = systemData.doctors[0];
+      }
+
+      // Schedule for tomorrow 10:00 AM by default or parse date
+      const appointmentDate = new Date();
+      appointmentDate.setDate(appointmentDate.getDate() + 1);
+      appointmentDate.setHours(10, 0, 0, 0);
+
+      const type = lower.includes('telemedicine') || lower.includes('video') || lower.includes('online')
+        ? 'telemedicine'
+        : 'in_person';
+
+      try {
+        const appointment = await prisma.appointment.create({
+          data: {
+            patientId: userId,
+            doctorId: targetDoctor.id,
+            appointmentDate,
+            type,
+            notes: `Booked via PharmaLink AI Assistant for clinical consultation.`,
+            hospital: targetDoctor.doctorProfile?.hospital || 'Hôpital Central de Yaoundé',
+            status: 'confirmed',
+          },
+        });
+
+        // Notify doctor & patient
+        await notificationService.send(
+          targetDoctor.id,
+          'New Appointment Scheduled 📅',
+          `New appointment booked with ${currentUser.name || 'Patient'} on ${appointmentDate.toLocaleDateString()} at 10:00 AM.`,
+          'appointment'
+        ).catch(() => {});
+
+        const docName = `Dr. ${targetDoctor.name.replace(/^Dr\.\s*/i, '')}`;
+        const formattedDate = appointmentDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+        return {
+          reply: `✅ **Appointment Confirmed!**\n\nI have scheduled your consultation with **${docName}** (${targetDoctor.doctorProfile?.specialty || 'General Practitioner'}).\n\n• **Date & Time:** ${formattedDate}\n• **Location / Type:** ${type === 'telemedicine' ? '📱 Telemedicine Video Call' : '🏥 ' + (targetDoctor.doctorProfile?.hospital || 'Hôpital Central de Yaoundé')}\n• **Status:** Confirmed\n\nYou can view and manage this directly in your **"Appointments"** tab.`,
+          action: {
+            type: 'appointment',
+            id: appointment.id,
+            title: 'View Confirmed Appointment',
+            data: appointment,
+          },
+        };
+      } catch (err) {
+        console.error('[Gemini Agent] Booking failed:', err.message);
+      }
+    }
+
+    // ─── ACTION 2: ORDER MEDICATION INTENT ─────────────────────────────────────
+    const isOrderIntent = (
+      (lower.includes('order') || lower.includes('buy') || lower.includes('purchase') || lower.includes('commander') || lower.includes('acheter')) &&
+      (lower.includes('drug') || lower.includes('medication') || lower.includes('paracetamol') || lower.includes('artemether') || lower.includes('coartem') || lower.includes('amoxicillin') || lower.includes('pill') || lower.includes('tablet'))
+    );
+
+    if (isOrderIntent && userId && systemData.medications.length > 0) {
+      // Find matching medication
+      let targetMed = systemData.medications.find(m =>
+        lower.includes(m.name.toLowerCase().split(' ')[0])
+      );
+      if (!targetMed) {
+        targetMed = systemData.medications[0];
+      }
+
+      const quantity = 1;
+      const totalFcfa = parseFloat(targetMed.priceFcfa) * quantity;
+      const pharmacyId = targetMed.pharmacyId;
+
+      try {
+        const order = await prisma.order.create({
+          data: {
+            patientId: userId,
+            pharmacyId,
+            orderType: 'delivery',
+            totalFcfa,
+            deliveryAddress: 'Quartier Bastos, Yaoundé',
+            status: 'pending',
+            items: {
+              create: [
+                {
+                  medicationId: targetMed.id,
+                  quantity,
+                  unitPriceFcfa: targetMed.priceFcfa,
+                },
+              ],
+            },
+          },
+          include: { items: { include: { medication: true } }, pharmacy: true },
+        });
+
+        const pharmName = targetMed.pharmacy?.pharmacyName || 'Pharmacie Centrale';
+
+        return {
+          reply: `🛒 **Order Created Successfully!**\n\nI have prepared your order for **${targetMed.name}** at **${pharmName}** (cheapest in stock).\n\n• **Item:** ${targetMed.name} x${quantity}\n• **Total:** FCFA ${totalFcfa.toLocaleString()}\n• **Pharmacy:** ${pharmName}\n• **Delivery:** Doorstep Express Courier\n\nTap the action button below to complete checkout with **MTN MoMo**, **Orange Money**, or **Cash on Delivery**!`,
+          action: {
+            type: 'order',
+            id: order.id,
+            totalFcfa,
+            title: `Pay FCFA ${totalFcfa} & Track Order`,
+            data: order,
+          },
+        };
+      } catch (err) {
+        console.error('[Gemini Agent] Order creation failed:', err.message);
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Interactive Health Assistant Chat & Autonomous Agent
+   */
+  async chat(userMessage, context = '', history = [], currentUser = null) {
     const apiKey = this.getApiKey();
     const systemData = await this.getSystemKnowledge();
+
+    // Check if the user asked to execute an action (Book Appointment or Order Drug)
+    const executedAction = await this.handleAgentActions(userMessage, currentUser, systemData);
+    if (executedAction) {
+      return executedAction;
+    }
 
     const systemInstruction = `You are the master AI Clinical & Healthcare Agent for PharmaLink in Cameroon.
 You have FULL ACCESS to the PharmaLink live healthcare database below.
@@ -86,25 +212,21 @@ ${systemData.medicationsText}
 PARTNER HOSPITALS: Hôpital Central de Yaoundé, CHU Yaoundé, Hôpital Général, Clinique Bastos, Hôpital Jamot, Hôpital Laquintinie de Douala.
 ========================================
 
-YOUR CAPABILITIES & INSTRUCTIONS:
-1. RECOMMEND DOCTORS & APPOINTMENTS:
-   - When the user asks about seeing a doctor, appointments, or needs clinical help, name the specific doctor (e.g. Dr. Amadou, Dr. Marie), their specialty, and their hospital from the directory above.
-   - Explain that they can book directly under the "Doctors / Appointments" tab in the app for in-person or telemedicine visits.
+YOUR AGENTIC CAPABILITIES:
+1. YOU CAN DIRECTLY SET APPOINTMENTS:
+   - Tell the user: "Yes! I can book an appointment with any available doctor (like Dr. Amadou at Hôpital Central). Just tell me which doctor and when, or say 'Book an appointment with Dr. Amadou'!"
 
-2. FIND CHEAPEST & AVAILABLE MEDICATIONS:
-   - When the user asks for a drug (e.g. Paracetamol, Artemether, Coartem, Amoxicillin, Omeprazole, etc.), check the directory above and state the EXACT cheapest pharmacy name, address, and price in FCFA.
-   - Mention they can tap the "Search Medications" tab or checkout directly with MTN MoMo / Orange Money / Cash on delivery!
+2. YOU CAN DIRECTLY ORDER DRUGS:
+   - Tell the user: "Yes! I can order medications for you from the cheapest pharmacy in stock (e.g. Paracetamol 500mg for 1,200 FCFA at Pharmacie Centrale). Just say 'Order Paracetamol for me'!"
 
-3. INTERACTIVE & CONVERSATIONAL STYLE:
-   - Talk naturally and directly. DO NOT output canned robotic introductory paragraphs like "Hello I am PharmaLink AI..." every turn.
-   - Answer their specific question first, give relevant doctor/pharmacy recommendations from the directory, and ask interactive clinical follow-up questions.
-   - Use clear, clean markdown bullet points.`;
+3. BE INTERACTIVE & CONVERSATIONAL:
+   - Talk naturally without repeating canned introductions.
+   - Answer directly, provide exact prices/names from the directory, and ask helpful follow-up questions.`;
 
     if (apiKey && apiKey !== 'your_gemini_api_key') {
       try {
         const url = `${this.baseUrl}/${this.model}:generateContent?key=${apiKey}`;
 
-        // Build multi-turn contents
         const contents = [];
 
         if (Array.isArray(history) && history.length > 0) {
@@ -138,14 +260,16 @@ YOUR CAPABILITIES & INSTRUCTIONS:
         );
 
         const text = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (text) return text;
+        if (text) return { reply: text };
       } catch (err) {
         console.error('[Gemini API Error]:', err.response?.data || err.message);
       }
     }
 
-    // Dynamic, knowledge-aware fallback response generator
-    return this.getKnowledgeAwareFallback(userMessage, systemData, history);
+    // Knowledge-aware fallback reply
+    return {
+      reply: this.getKnowledgeAwareFallback(userMessage, systemData, history),
+    };
   }
 
   /**
@@ -177,35 +301,20 @@ YOUR CAPABILITIES & INSTRUCTIONS:
   }
 
   /**
-   * System-Knowledge Aware Fallback (Used if API Key is not set or network fails)
+   * System-Knowledge Aware Fallback
    */
   getKnowledgeAwareFallback(msg, systemData, history = []) {
     const lower = (msg || '').toLowerCase().trim();
 
-    // 1. Doctor Recommendation or Appointment Booking Request
-    if (lower.includes('doctor') || lower.includes('médecin') || lower.includes('appointment') || lower.includes('rendez-vous') || lower.includes('consult') || lower.includes('hospital')) {
-      const docSample = systemData.doctorsText.split('\n').slice(0, 3).join('\n');
-      return `🩺 **Available Doctors on PharmaLink:**\n\nHere are verified doctors available for consultation:\n${docSample}\n\n📅 **How to Book an Appointment:**\n1. Go to the **"Doctors"** tab in PharmaLink.\n2. Choose between **In-Person Hospital Visit** or **Telemedicine Video Call**.\n3. Pick your preferred date & time slot.\n\nWould you like me to tell you more about a specific doctor's specialty or hospital?`;
+    if (lower.includes('appointment') || lower.includes('rendez-vous') || lower.includes('doctor') || lower.includes('order') || lower.includes('drug') || lower.includes('can you') || lower.includes('can he')) {
+      return `🩺 **Yes, absolutely! I can do both directly for you:**\n\n1. **📅 Book an Appointment:**\n   • I can schedule a consultation with any certified doctor in our network (e.g. **Dr. Amadou** at *Hôpital Central de Yaoundé* or **Dr. Marie** at *Clinique Bastos*).\n   • *Just say:* **"Book an appointment with Dr. Amadou for tomorrow"**\n\n2. **💊 Order Medications (Cheapest in Stock):**\n   • I can search all licensed pharmacies and create an order with express courier delivery.\n   • *Just say:* **"Order Paracetamol 500mg for me"** or **"Order Coartem"**\n\nWhat would you like me to do for you right now?`;
     }
 
-    // 2. Medication Price & Cheap Pharmacy Search
-    if (lower.includes('paracetamol') || lower.includes('artemether') || lower.includes('coartem') || lower.includes('amoxicillin') || lower.includes('cheap') || lower.includes('price') || lower.includes('prix') || lower.includes('buy') || lower.includes('order') || lower.includes('pharmacy') || lower.includes('médicament')) {
-      const medSample = systemData.medicationsText.split('\n').slice(0, 4).join('\n');
-      return `💊 **Live Medication Prices & Available Pharmacies:**\n\nHere are the current lowest prices across licensed pharmacies in our network:\n${medSample}\n\n🛒 **How to Order:**\n• Tap the **"Search Medications"** tab to view all pharmacies on the **interactive Google Map**.\n• Checkout with **MTN MoMo**, **Orange Money**, or **Cash on Delivery**.\n• Live track the delivery motorbike right to your doorstep!\n\nAre you looking for another medication? Let me know and I will find the best price!`;
-    }
-
-    // 3. Malaria & Fevers
-    if (lower.includes('malaria') || lower.includes('palu') || lower.includes('fever') || lower.includes('fièvre')) {
-      return `🦟 **Malaria Clinical Guidance & Available Meds:**\n\n• **Recommended ACTs:** *Artemether-Lumefantrine (Coartem)* is in stock at **Pharmacie Centrale** and **Pharmacie Bastos** starting at **2,200 FCFA**.\n• **Fever Management:** Paracetamol 500mg/1g (from **1,200 FCFA**).\n• **Doctor Advice:** Dr. Amadou at *Hôpital Central de Yaoundé* is available for consultation to order a rapid test (RDT) before treatment.\n\nHow long have you been experiencing this fever?`;
-    }
-
-    // 4. Greetings
     if (/^(hi|hello|hey|salut|bonjour)/.test(lower)) {
-      return `Hello! I'm your PharmaLink Clinical Health Assistant. 🩺\n\nI can:\n• Find the **cheapest pharmacies** for any medication you need.\n• Connect you with **available doctors** at partner hospitals (*Hôpital Central, CHU, Clinique Bastos*).\n• Provide symptom triage and medication dosage advice.\n\nHow can I help you today?`;
+      return `Hello! I'm your PharmaLink Autonomous Clinical Agent. 🩺\n\nI can:\n• **Book doctor appointments** for you directly.\n• **Order medications** from the cheapest pharmacies in stock.\n• Answer clinical symptom and dosage questions.\n\nHow can I help you today?`;
     }
 
-    // 5. Default contextual
-    return `I can help you with that! On PharmaLink, you can find certified doctors, book appointments, or search for medications with real-time stock and prices across licensed pharmacies in Cameroon.\n\nCould you specify which symptom or medication you need help with?`;
+    return `I am ready to help! You can ask me to **book an appointment** with any doctor, **order medications** with express delivery, or get medical guidance.\n\nWhich doctor or medication are you looking for?`;
   }
 }
 

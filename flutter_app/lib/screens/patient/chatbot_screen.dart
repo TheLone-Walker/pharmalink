@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../services/api_service.dart';
 import '../../utils/constants.dart';
+import 'patient_appointments_screen.dart';
+import 'my_orders_screen.dart';
 
 class ChatbotScreen extends StatefulWidget {
   const ChatbotScreen({super.key});
@@ -13,15 +15,20 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
   final _api = ApiService();
   final _ctrl = TextEditingController();
   final _scroll = ScrollController();
-  final List<Map<String, String>> _messages = [];
+  final List<Map<String, dynamic>> _messages = [];
   bool _loading = false;
 
   final List<String> _quickPrompts = [
-    'Malaria symptoms & treatment',
-    'Proper dosage for Paracetamol',
-    'How to store antibiotics',
-    'Common side effects of Artemether',
-    'Nearest 24/7 emergency pharmacy',
+    '📅 Book appointment with Dr. Amadou',
+    '💊 Order Paracetamol 500mg for me',
+    '📱 Schedule Telemedicine Video Call',
+    '🏥 Find doctors at Hôpital Central',
+    '💰 Cheapest pharmacy for Coartem',
+    '🔬 What lab tests do I need before consultation?',
+    '🦟 Malaria symptoms & ACT treatment',
+    '📋 Proper dosage & instructions for Amoxicillin',
+    '⚠️ Check drug interactions and warnings',
+    '🛵 Track my medication delivery',
   ];
 
   @override
@@ -29,7 +36,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     super.initState();
     _messages.add({
       'role': 'bot',
-      'text': 'Hello! I\'m PharmaLink AI Clinical Assistant 🩺. Ask me anything about medications, symptoms, or dosage instructions.',
+      'text': 'Hello! I\'m PharmaLink Autonomous Clinical Agent 🩺.\n\nI can:\n• **Book doctor appointments** directly for you.\n• **Order medications** from the cheapest pharmacy in stock.\n• Provide clinical guidance & medication instructions.',
     });
   }
 
@@ -51,7 +58,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     _scrollDown();
     try {
       final historyPayload = _messages
-          .where((m) => m['text'] != null && m['text']!.isNotEmpty)
+          .where((m) => m['text'] != null && (m['text'] as String).isNotEmpty)
           .map((m) => {'role': m['role'] == 'user' ? 'user' : 'model', 'text': m['text']})
           .toList();
 
@@ -59,7 +66,15 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
         'message': text,
         'history': historyPayload,
       });
-      setState(() => _messages.add({'role': 'bot', 'text': res.data['data']['reply']}));
+      final data = res.data['data'];
+      final reply = data['reply'] ?? 'Here is what I found for you.';
+      final action = data['action'];
+
+      setState(() => _messages.add({
+        'role': 'bot',
+        'text': reply,
+        'action': action,
+      }));
     } catch (_) {
       setState(() => _messages.add({
             'role': 'bot',
@@ -199,14 +214,82 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                             ],
                             border: isUser ? null : Border.all(color: const Color(0xFFE2E8F0)),
                           ),
-                          child: Text(
-                            m['text'] ?? '',
-                            style: GoogleFonts.plusJakartaSans(
-                              color: isUser ? Colors.white : AppColors.textDark,
-                              fontSize: 13.5,
-                              height: 1.4,
-                              fontWeight: isUser ? FontWeight.w500 : FontWeight.w400,
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                m['text'] ?? '',
+                                style: GoogleFonts.plusJakartaSans(
+                                  color: isUser ? Colors.white : AppColors.textDark,
+                                  fontSize: 13.5,
+                                  height: 1.4,
+                                  fontWeight: isUser ? FontWeight.w500 : FontWeight.w400,
+                                ),
+                              ),
+                              if (m['action'] != null) ...[
+                                const SizedBox(height: 12),
+                                InkWell(
+                                  onTap: () {
+                                    final act = m['action'];
+                                    if (act['type'] == 'appointment') {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => const PatientAppointmentsScreen(),
+                                        ),
+                                      );
+                                    } else if (act['type'] == 'order') {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => const MyOrdersScreen(),
+                                        ),
+                                      );
+                                    }
+                                  },
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                                    decoration: BoxDecoration(
+                                      gradient: AppColors.primaryGradient,
+                                      borderRadius: BorderRadius.circular(10),
+                                      boxShadow: const [
+                                        BoxShadow(
+                                          color: Color(0x220D6E48),
+                                          blurRadius: 8,
+                                          offset: Offset(0, 3),
+                                        ),
+                                      ],
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          m['action']['type'] == 'appointment'
+                                              ? Icons.calendar_month_rounded
+                                              : Icons.shopping_bag_rounded,
+                                          color: Colors.white,
+                                          size: 16,
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Flexible(
+                                          child: Text(
+                                            m['action']['title'] ?? 'View Details',
+                                            style: GoogleFonts.plusJakartaSans(
+                                              fontSize: 12.5,
+                                              fontWeight: FontWeight.w700,
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 6),
+                                        const Icon(Icons.arrow_forward_ios_rounded, color: Colors.white, size: 12),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
                           ),
                         ),
                       ),

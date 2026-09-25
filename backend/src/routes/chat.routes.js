@@ -3,12 +3,16 @@ const prisma = require('../config/db');
 const { authenticate } = require('../middleware/auth.middleware');
 const geminiService = require('../services/gemini.service');
 
-// AI Health Assistant Chat (Interactive Multi-Turn)
+// AI Health Assistant Chat (Interactive Multi-Turn & Action Agent)
 router.post('/gemini', authenticate, async (req, res, next) => {
   try {
     const { message, context, history } = req.body;
-    const reply = await geminiService.chat(message, context || '', history || []);
-    res.json({ success: true, data: { reply } });
+    const result = await geminiService.chat(message, context || '', history || [], req.user);
+    if (typeof result === 'string') {
+      res.json({ success: true, data: { reply: result } });
+    } else {
+      res.json({ success: true, data: result });
+    }
   } catch (err) { next(err); }
 });
 
