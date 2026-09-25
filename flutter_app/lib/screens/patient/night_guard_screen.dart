@@ -53,14 +53,23 @@ class _NightGuardScreenState extends State<NightGuardScreen> with SingleTickerPr
   Future<void> _makeCall(String phoneNumber) async {
     final cleanPhone = phoneNumber.replaceAll(RegExp(r'[^0-9+]'), '');
     final uri = Uri.parse('tel:$cleanPhone');
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri);
-    } else {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Could not dial $phoneNumber')),
-        );
+    try {
+      if (await canLaunchUrl(uri)) {
+        await launchUrl(uri);
+        return;
       }
+    } catch (_) {}
+
+    // Fallback: Copy to clipboard if dialing cannot be launched (e.g. web browser)
+    await Clipboard.setData(ClipboardData(text: cleanPhone));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Phone number copied to clipboard: $cleanPhone'),
+          backgroundColor: const Color(0xFF10B981),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
     }
   }
 
