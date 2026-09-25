@@ -1,6 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'storage_service.dart';
 import '../utils/constants.dart';
 import '../main.dart';
 import '../screens/auth/login_screen.dart';
@@ -10,7 +10,7 @@ class ApiService {
   factory ApiService() => _instance;
   ApiService._internal();
 
-  final _storage = const FlutterSecureStorage();
+  final _storage = AppStorageService();
   late final Dio _dio;
 
   void init() {

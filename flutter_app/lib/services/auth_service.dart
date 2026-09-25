@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'storage_service.dart';
 import 'package:dio/dio.dart';
 import 'dart:convert';
 import 'api_service.dart';
@@ -8,7 +8,7 @@ import 'socket_service.dart';
 
 class AuthService extends ChangeNotifier {
   final _api = ApiService();
-  final _storage = const FlutterSecureStorage();
+  final _storage = AppStorageService();
 
   Map<String, dynamic>? _user;
   bool _isLoading = false;
