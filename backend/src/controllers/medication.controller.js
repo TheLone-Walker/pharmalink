@@ -284,4 +284,17 @@ const getNightGuardServices = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+const getById = async (req, res, next) => {
+  try {
+    const med = await prisma.medication.findUnique({
+      where: { id: req.params.id },
+      include: { pharmacy: true },
+    });
+    if (!med) throw { status: 404, message: 'Medication not found' };
+    res.json({ success: true, data: med });
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = { search, suggestions, getById, getNightGuardServices };
