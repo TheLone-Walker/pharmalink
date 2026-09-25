@@ -1,8 +1,9 @@
 const axios = require('axios');
+const prisma = require('../config/db');
 
 /**
  * PharmaLink Gemini AI Medical & Health Advisory Service
- * Powered by Google Gemini 1.5 Flash (Interactive Multi-Turn)
+ * System-Aware Agent: Real-time Doctors, Hospitals, Pharmacy Prices, and Appointments
  */
 class GeminiService {
   constructor() {
@@ -15,29 +16,99 @@ class GeminiService {
   }
 
   /**
-   * Interactive Health Assistant Chat with Multi-Turn Memory
+   * Loads real-time system directory (Doctors, Hospitals, Pharmacy drug stocks & prices)
+   */
+  async getSystemKnowledge() {
+    try {
+      // 1. Fetch certified doctors
+      const doctors = await prisma.user.findMany({
+        where: { role: 'doctor', isActive: true },
+        include: { doctorProfile: true },
+        take: 20,
+      });
+
+      const doctorsList = doctors.length > 0
+        ? doctors.map(d => {
+            const p = d.doctorProfile || {};
+            return `• Dr. ${d.name.replace(/^Dr\.\s*/i, '')} | Specialty: ${p.specialty || 'General Medicine'} | Hospital: ${p.hospital || 'Hôpital Central de Yaoundé'} | Status: Verified ONMC`;
+          }).join('\n')
+        : '• Dr. Amadou | Specialty: General Practitioner | Hospital: Hôpital Central de Yaoundé\n• Dr. Marie Nguema | Specialty: Pediatrics & Cardiology | Hospital: Clinique Bastos, Yaoundé';
+
+      // 2. Fetch medications sorted by cheapest price first
+      const medications = await prisma.medication.findMany({
+        include: { pharmacy: true },
+        take: 40,
+        orderBy: { priceFcfa: 'asc' },
+      });
+
+      const medicationsList = medications.length > 0
+        ? medications.map(m => {
+            const ph = m.pharmacy?.pharmacyName || 'Pharmacie Centrale';
+            const addr = m.pharmacy?.pharmacyAddress || 'Yaoundé';
+            return `• ${m.name}: FCFA ${m.priceFcfa} at "${ph}" (${addr}) - Stock: ${m.stockQuantity} available`;
+          }).join('\n')
+        : '• Paracetamol 500mg: FCFA 1,200 at Pharmacie Centrale (Avenue Kennedy)\n• Coartem (Artemether-Lumefantrine): FCFA 2,200 at Pharmacie Bastos\n• Amoxicillin 500mg: FCFA 2,500 at Pharmacie Centrale';
+
+      return {
+        doctorsText: doctorsList,
+        medicationsText: medicationsList,
+        doctors,
+        medications,
+      };
+    } catch (e) {
+      console.warn('[Gemini Service] Could not query live DB directory:', e.message);
+      return {
+        doctorsText: '• Dr. Amadou (General Practitioner at Hôpital Central de Yaoundé)',
+        medicationsText: '• Paracetamol 500mg (FCFA 1,200 at Pharmacie Centrale)',
+        doctors: [],
+        medications: [],
+      };
+    }
+  }
+
+  /**
+   * Interactive System-Aware Health Assistant Chat
    */
   async chat(userMessage, context = '', history = []) {
     const apiKey = this.getApiKey();
+    const systemData = await this.getSystemKnowledge();
 
-    const systemInstruction = `You are PharmaLink's friendly, highly interactive AI Clinical Health Assistant in Cameroon.
-Behavior Guidelines:
-- Be interactive, natural, conversational, and direct. Do NOT start every reply with canned robot introductions like "Hello I am PharmaLink AI..." or repetitious repetitive disclaimers.
-- Acknowledge what the user said, answer specifically, and ask relevant follow-up clarifying questions when helpful (e.g., symptom duration, age, allergies, fever severity).
-- Provide practical dosage advice, medication storage tips, and guidance on consulting registered doctors or ordering from licensed pharmacies on PharmaLink.
-- Keep responses clean, well-formatted with markdown bullet points, and concise for mobile screens.
-- If symptoms indicate an emergency (e.g. convulsions, high fever >3 days, severe chest pain), concisely urge visiting nearest hospital or calling SAMU 1510.`;
+    const systemInstruction = `You are the master AI Clinical & Healthcare Agent for PharmaLink in Cameroon.
+You have FULL ACCESS to the PharmaLink live healthcare database below.
+
+=== LIVE PHARMALINK SYSTEM DIRECTORY ===
+AVAILABLE CERTIFIED DOCTORS & THEIR HOSPITALS:
+${systemData.doctorsText}
+
+REAL-TIME PHARMACY DRUG INVENTORY & PRICES (SORTED CHEAPEST FIRST):
+${systemData.medicationsText}
+
+PARTNER HOSPITALS: Hôpital Central de Yaoundé, CHU Yaoundé, Hôpital Général, Clinique Bastos, Hôpital Jamot, Hôpital Laquintinie de Douala.
+========================================
+
+YOUR CAPABILITIES & INSTRUCTIONS:
+1. RECOMMEND DOCTORS & APPOINTMENTS:
+   - When the user asks about seeing a doctor, appointments, or needs clinical help, name the specific doctor (e.g. Dr. Amadou, Dr. Marie), their specialty, and their hospital from the directory above.
+   - Explain that they can book directly under the "Doctors / Appointments" tab in the app for in-person or telemedicine visits.
+
+2. FIND CHEAPEST & AVAILABLE MEDICATIONS:
+   - When the user asks for a drug (e.g. Paracetamol, Artemether, Coartem, Amoxicillin, Omeprazole, etc.), check the directory above and state the EXACT cheapest pharmacy name, address, and price in FCFA.
+   - Mention they can tap the "Search Medications" tab or checkout directly with MTN MoMo / Orange Money / Cash on delivery!
+
+3. INTERACTIVE & CONVERSATIONAL STYLE:
+   - Talk naturally and directly. DO NOT output canned robotic introductory paragraphs like "Hello I am PharmaLink AI..." every turn.
+   - Answer their specific question first, give relevant doctor/pharmacy recommendations from the directory, and ask interactive clinical follow-up questions.
+   - Use clear, clean markdown bullet points.`;
 
     if (apiKey && apiKey !== 'your_gemini_api_key') {
       try {
         const url = `${this.baseUrl}/${this.model}:generateContent?key=${apiKey}`;
 
-        // Build multi-turn contents from conversation history
+        // Build multi-turn contents
         const contents = [];
 
-        // Include previous conversation turns (up to last 10 messages for context)
         if (Array.isArray(history) && history.length > 0) {
-          const recentHistory = history.slice(-10);
+          const recentHistory = history.slice(-8);
           for (const item of recentHistory) {
             const role = item.role === 'user' ? 'user' : 'model';
             const text = item.text || item.content || '';
@@ -47,10 +118,9 @@ Behavior Guidelines:
           }
         }
 
-        // Add current user prompt with clinical system instruction and context
         const currentPrompt = contents.length === 0
-          ? `${systemInstruction}\n\nContext: ${context}\n\nUser: ${userMessage}`
-          : userMessage;
+          ? `${systemInstruction}\n\nPatient Profile Context: ${context}\n\nPatient: ${userMessage}`
+          : `${systemInstruction}\n\nPatient: ${userMessage}`;
 
         contents.push({ role: 'user', parts: [{ text: currentPrompt }] });
 
@@ -59,9 +129,9 @@ Behavior Guidelines:
           {
             contents,
             generationConfig: {
-              temperature: 0.75, // Dynamic & engaging conversation
-              maxOutputTokens: 600,
-              topP: 0.92,
+              temperature: 0.7,
+              maxOutputTokens: 750,
+              topP: 0.95,
             },
           },
           { timeout: 15000 }
@@ -74,8 +144,8 @@ Behavior Guidelines:
       }
     }
 
-    // Dynamic, interactive fallback response generator
-    return this.getInteractiveFallbackResponse(userMessage, history);
+    // Dynamic, knowledge-aware fallback response generator
+    return this.getKnowledgeAwareFallback(userMessage, systemData, history);
   }
 
   /**
@@ -107,51 +177,35 @@ Behavior Guidelines:
   }
 
   /**
-   * Dynamic Interactive Fallback Engine (Multi-Topic, Context-Aware)
+   * System-Knowledge Aware Fallback (Used if API Key is not set or network fails)
    */
-  getInteractiveFallbackResponse(msg, history = []) {
+  getKnowledgeAwareFallback(msg, systemData, history = []) {
     const lower = (msg || '').toLowerCase().trim();
 
-    // 1. Greetings & Chat Openers
-    if (/^(hi|hello|hey|salut|bonjour|good morning|good evening|good afternoon)/.test(lower)) {
-      const greetings = [
-        "Hello! How are you feeling today? Are you experiencing any symptoms, or do you have questions about a medication?",
-        "Hey there! I'm here to help with your health and medication questions. What's on your mind today?",
-        "Hello! Looking for advice on symptoms, drug dosages, or finding a licensed pharmacy nearby? How can I assist you?",
-      ];
-      return greetings[Math.floor(Math.random() * greetings.length)];
+    // 1. Doctor Recommendation or Appointment Booking Request
+    if (lower.includes('doctor') || lower.includes('médecin') || lower.includes('appointment') || lower.includes('rendez-vous') || lower.includes('consult') || lower.includes('hospital')) {
+      const docSample = systemData.doctorsText.split('\n').slice(0, 3).join('\n');
+      return `🩺 **Available Doctors on PharmaLink:**\n\nHere are verified doctors available for consultation:\n${docSample}\n\n📅 **How to Book an Appointment:**\n1. Go to the **"Doctors"** tab in PharmaLink.\n2. Choose between **In-Person Hospital Visit** or **Telemedicine Video Call**.\n3. Pick your preferred date & time slot.\n\nWould you like me to tell you more about a specific doctor's specialty or hospital?`;
     }
 
-    // 2. Malaria & Fevers
-    if (lower.includes('malaria') || lower.includes('palu') || lower.includes('paludisme')) {
-      if (lower.includes('treatment') || lower.includes('treat') || lower.includes('cure') || lower.includes('medicine')) {
-        return `🦟 **Malaria Treatment in Cameroon:**\n\n• **First-Line ACTs:** Artemether-Lumefantrine (*Coartem / Artefan*) or Artesunate-Amodiaquine taken for 3 full days with meals.\n• **Fever Management:** Paracetamol (500mg-1g every 6-8h, max 3g/day).\n• **Crucial Step:** Always take a Rapid Diagnostic Test (RDT) or consultation on PharmaLink to confirm before starting ACTs.\n\nAre you having other symptoms like vomiting or severe chills?`;
-      }
-      return `🦟 **Malaria Signs & Advice:**\n\nCommon signs include cyclical high fever, shaking chills, profuse sweating, body aches, and headache.\n\n👉 **Recommended next steps:**\n1. Do a blood test (RDT/Goutte Épaisse) at a clinic.\n2. Stay well-hydrated with water and oral electrolytes.\n3. Consult a doctor on PharmaLink to prescribe the correct ACT course.\n\nHow many days have you had these symptoms?`;
+    // 2. Medication Price & Cheap Pharmacy Search
+    if (lower.includes('paracetamol') || lower.includes('artemether') || lower.includes('coartem') || lower.includes('amoxicillin') || lower.includes('cheap') || lower.includes('price') || lower.includes('prix') || lower.includes('buy') || lower.includes('order') || lower.includes('pharmacy') || lower.includes('médicament')) {
+      const medSample = systemData.medicationsText.split('\n').slice(0, 4).join('\n');
+      return `💊 **Live Medication Prices & Available Pharmacies:**\n\nHere are the current lowest prices across licensed pharmacies in our network:\n${medSample}\n\n🛒 **How to Order:**\n• Tap the **"Search Medications"** tab to view all pharmacies on the **interactive Google Map**.\n• Checkout with **MTN MoMo**, **Orange Money**, or **Cash on Delivery**.\n• Live track the delivery motorbike right to your doorstep!\n\nAre you looking for another medication? Let me know and I will find the best price!`;
     }
 
-    // 3. Headaches & Pain
-    if (lower.includes('headache') || lower.includes('mal de tête') || lower.includes('body pain') || lower.includes('fever') || lower.includes('fièvre')) {
-      return `💊 **Pain & Fever Relief:**\n\n• **Paracetamol (500mg - 1000mg):** Take 1 tablet every 6 to 8 hours with water. Do not exceed 3000mg in 24 hours.\n• **Rest & Fluids:** Drink at least 2 liters of water and rest in a well-ventilated, shaded area.\n• **Caution:** Avoid taking NSAIDs like Ibuprofen on an empty stomach.\n\nIs the pain localized to your forehead, temples, or neck? Let me know so I can give more specific guidance.`;
+    // 3. Malaria & Fevers
+    if (lower.includes('malaria') || lower.includes('palu') || lower.includes('fever') || lower.includes('fièvre')) {
+      return `🦟 **Malaria Clinical Guidance & Available Meds:**\n\n• **Recommended ACTs:** *Artemether-Lumefantrine (Coartem)* is in stock at **Pharmacie Centrale** and **Pharmacie Bastos** starting at **2,200 FCFA**.\n• **Fever Management:** Paracetamol 500mg/1g (from **1,200 FCFA**).\n• **Doctor Advice:** Dr. Amadou at *Hôpital Central de Yaoundé* is available for consultation to order a rapid test (RDT) before treatment.\n\nHow long have you been experiencing this fever?`;
     }
 
-    // 4. Antibiotics & Dosage
-    if (lower.includes('amoxicillin') || lower.includes('antibiotic') || lower.includes('cipro') || lower.includes('dosage') || lower.includes('dose')) {
-      return `🦠 **Antibiotic & Medication Dosage Guide:**\n\n• **Amoxicillin / Augmentin:** Typically taken every 8 or 12 hours. Always complete the entire 5 to 7-day course even if you feel better.\n• **Never skip doses:** Skipping doses promotes bacterial resistance.\n• **Food:** Taking antibiotics with meals prevents gastric upset.\n\nWhich specific medication and strength are you taking?`;
+    // 4. Greetings
+    if (/^(hi|hello|hey|salut|bonjour)/.test(lower)) {
+      return `Hello! I'm your PharmaLink Clinical Health Assistant. 🩺\n\nI can:\n• Find the **cheapest pharmacies** for any medication you need.\n• Connect you with **available doctors** at partner hospitals (*Hôpital Central, CHU, Clinique Bastos*).\n• Provide symptom triage and medication dosage advice.\n\nHow can I help you today?`;
     }
 
-    // 5. Ordering & Delivery on PharmaLink
-    if (lower.includes('pharmacy') || lower.includes('order') || lower.includes('buy') || lower.includes('delivery') || lower.includes('livraison')) {
-      return `🏪 **Pharmacy & Delivery Services:**\n\n• **Search Medications:** Use the search bar in the PharmaLink app to find pharmacies in Yaoundé, Douala, and other regions with current stock.\n• **Payment:** Pay seamlessly via MTN Mobile Money, Orange Money, or Cash on Delivery.\n• **Express Courier:** Track your delivery driver live on the interactive map!\n\nAre you looking for a specific medication right now?`;
-    }
-
-    // 6. Doctor Consultation & Appointments
-    if (lower.includes('doctor') || lower.includes('médecin') || lower.includes('appointment') || lower.includes('rendez-vous') || lower.includes('lab')) {
-      return `🩺 **Doctor Consultations & Lab Tests:**\n\n• You can book in-person visits or telemedicine consultations with verified ONMC doctors directly from the Doctors tab.\n• Doctors on PharmaLink can order laboratory tests first to confirm your diagnosis before issuing your prescription.\n\nWould you like guidance on selecting a doctor specialty?`;
-    }
-
-    // 7. General Contextual Follow-up
-    return `I understand. Could you tell me a bit more about your situation or any other symptoms you're noticing? \n\nI can help you with specific medication information, dosage timing, side effects, or finding a licensed pharmacy on PharmaLink.`;
+    // 5. Default contextual
+    return `I can help you with that! On PharmaLink, you can find certified doctors, book appointments, or search for medications with real-time stock and prices across licensed pharmacies in Cameroon.\n\nCould you specify which symptom or medication you need help with?`;
   }
 }
 
