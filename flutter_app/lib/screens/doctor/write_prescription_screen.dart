@@ -47,6 +47,28 @@ class _WritePrescriptionScreenState extends State<WritePrescriptionScreen> with 
   final List<Map<String, TextEditingController>> _medicationItems = [];
   final _pharmacyNotesCtrl = TextEditingController();
 
+  // Lab Analysis Request State
+  final Set<String> _selectedLabTests = {};
+  final _customLabTestCtrl = TextEditingController();
+  final _labInstructionsCtrl = TextEditingController();
+  String _labUrgency = 'routine';
+  bool _isSubmittingLab = false;
+
+  final List<String> _commonLabTests = [
+    'Malaria RDT / Thick Drop (Goutte Épaisse)',
+    'Full Blood Count (NFS / CBC)',
+    'Widal & Felix Serology (Typhoid)',
+    'Fasting Blood Sugar (Glycemia)',
+    'Urinalysis (ECBU / Dipstick)',
+    'Stool Examination (KOP / Coprologie)',
+    'Creatinine & Urea (Renal Profile)',
+    'Liver Function (ALT / AST / Bilirubin)',
+    'Lipid Profile (Cholesterol / Triglycerides)',
+    'C-Reactive Protein (CRP)',
+    'Chest X-Ray (Radiographie Thorax)',
+    'Abdominal Ultrasound (Échographie)',
+  ];
+
   bool _isSaving = false;
 
   // Quick Chips
@@ -95,7 +117,7 @@ class _WritePrescriptionScreenState extends State<WritePrescriptionScreen> with 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     _selectedPatientId = widget.patientId;
     _selectedPatientName = widget.patientName;
 
@@ -123,6 +145,8 @@ class _WritePrescriptionScreenState extends State<WritePrescriptionScreen> with 
     _diagnosisCtrl.dispose();
     _recommendationsCtrl.dispose();
     _pharmacyNotesCtrl.dispose();
+    _customLabTestCtrl.dispose();
+    _labInstructionsCtrl.dispose();
     for (final item in _medicationItems) {
       item['name']?.dispose();
       item['dosage']?.dispose();
@@ -133,6 +157,89 @@ class _WritePrescriptionScreenState extends State<WritePrescriptionScreen> with 
       item['duration']?.dispose();
     }
     super.dispose();
+  }
+
+  Future<void> _submitLabAnalysisRequest() async {
+    if (_selectedPatientId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a patient first'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+
+    final customTest = _customLabTestCtrl.text.trim();
+    final allTests = {..._selectedLabTests};
+    if (customTest.isNotEmpty) {
+      allTests.add(customTest);
+    }
+
+    if (allTests.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select or specify at least one laboratory test to request'), backgroundColor: Colors.orange),
+      );
+      return;
+    }
+
+    setState(() => _isSubmittingLab = true);
+
+    try {
+      final payload = {
+        'patientId': _selectedPatientId,
+        'appointmentId': widget.appointmentId,
+        'symptoms': _symptomsCtrl.text.trim(),
+        'vitals': {
+          'bloodPressure': _bpCtrl.text.trim(),
+          'temperature': _tempCtrl.text.trim(),
+          'heartRate': _pulseCtrl.text.trim(),
+          'respiratoryRate': _respRateCtrl.text.trim(),
+          'weight': _weightCtrl.text.trim(),
+          'bloodSugar': _sugarCtrl.text.trim(),
+          'spo2': _spo2Ctrl.text.trim(),
+        },
+        'preliminaryDiagnosis': _diagnosisCtrl.text.trim().isNotEmpty ? _diagnosisCtrl.text.trim() : 'Under Clinical Investigation',
+        'clinicalNotes': _clinicalNotesCtrl.text.trim(),
+        'labTests': allTests.toList(),
+        'urgency': _labUrgency,
+        'instructions': _labInstructionsCtrl.text.trim(),
+      };
+
+      await _api.post('/prescriptions/lab-request', data: payload);
+
+      if (!mounted) return;
+
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(children: const [
+            Icon(Icons.science_outlined, color: AppColors.primary, size: 28),
+            SizedBox(width: 10),
+            Expanded(child: Text('Lab Order Dispatched!')),
+          ]),
+          content: Text(
+            'The laboratory analysis order for ${allTests.length} test(s) has been dispatched to ${_selectedPatientName ?? 'the patient'}.\n\nPrescription is placed on hold until lab results are submitted.',
+            style: const TextStyle(fontSize: 14),
+          ),
+          actions: [
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
+              onPressed: () {
+                Navigator.pop(ctx);
+                Navigator.pop(context, true);
+              },
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error sending lab request: $e'), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _isSubmittingLab = false);
+    }
   }
 
   Future<void> _loadPatients() async {
@@ -330,10 +437,11 @@ class _WritePrescriptionScreenState extends State<WritePrescriptionScreen> with 
           indicatorWeight: 3,
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white70,
-          labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+          labelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
           tabs: const [
-            Tab(icon: Icon(Icons.medical_information_outlined, size: 20), text: '1. Consultation & Vitals'),
-            Tab(icon: Icon(Icons.receipt_long_outlined, size: 20), text: '2. Prescription (Rx)'),
+            Tab(icon: Icon(Icons.medical_information_outlined, size: 18), text: '1. Consultation'),
+            Tab(icon: Icon(Icons.science_outlined, size: 18), text: '2. Lab Request'),
+            Tab(icon: Icon(Icons.receipt_long_outlined, size: 18), text: '3. Prescription'),
           ],
         ),
       ),
@@ -345,6 +453,7 @@ class _WritePrescriptionScreenState extends State<WritePrescriptionScreen> with 
               controller: _tabController,
               children: [
                 _buildConsultationTab(),
+                _buildLabRequestTab(),
                 _buildPrescriptionTab(),
               ],
             ),
@@ -1211,6 +1320,170 @@ class _WritePrescriptionScreenState extends State<WritePrescriptionScreen> with 
     );
   }
 
+  Widget _buildLabRequestTab() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFFEFF6FF),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFBFDBFE)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                Icon(Icons.info_outline, color: Color(0xFF2563EB), size: 22),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Order laboratory analyses first if confirmation is needed before prescribing medications. The patient will be notified to visit a lab and upload results for your review.',
+                    style: TextStyle(fontSize: 13, color: Color(0xFF1E40AF), height: 1.4),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Diagnostic Tests Selection Card
+          _sectionCard(
+            title: 'Diagnostic Lab Tests (Select all required)',
+            icon: Icons.science_outlined,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: _commonLabTests.map((test) {
+                    final isSelected = _selectedLabTests.contains(test);
+                    return FilterChip(
+                      selected: isSelected,
+                      label: Text(test, style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
+                        color: isSelected ? Colors.white : AppColors.textDark,
+                      )),
+                      selectedColor: AppColors.primary,
+                      backgroundColor: Colors.grey[100],
+                      checkmarkColor: Colors.white,
+                      onSelected: (val) {
+                        setState(() {
+                          if (val) {
+                            _selectedLabTests.add(test);
+                          } else {
+                            _selectedLabTests.remove(test);
+                          }
+                        });
+                      },
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 14),
+                TextFormField(
+                  controller: _customLabTestCtrl,
+                  decoration: InputDecoration(
+                    labelText: 'Add Custom Lab Test / Medical Imaging',
+                    hintText: 'e.g. Serum Potassium, Thyroid Panel TSH, ECG...',
+                    prefixIcon: const Icon(Icons.add_circle_outline, color: AppColors.primary),
+                    filled: true,
+                    fillColor: Colors.grey[50],
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Urgency Level
+          _sectionCard(
+            title: 'Test Urgency Level',
+            icon: Icons.timer_outlined,
+            child: Row(
+              children: [
+                Expanded(
+                  child: ChoiceChip(
+                    label: const Center(child: Text('Routine')),
+                    selected: _labUrgency == 'routine',
+                    selectedColor: AppColors.primary,
+                    labelStyle: TextStyle(color: _labUrgency == 'routine' ? Colors.white : AppColors.textDark, fontWeight: FontWeight.w600),
+                    onSelected: (v) => setState(() => _labUrgency = 'routine'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ChoiceChip(
+                    label: const Center(child: Text('Urgent (<24h)')),
+                    selected: _labUrgency == 'urgent',
+                    selectedColor: Colors.orange[700],
+                    labelStyle: TextStyle(color: _labUrgency == 'urgent' ? Colors.white : AppColors.textDark, fontWeight: FontWeight.w600),
+                    onSelected: (v) => setState(() => _labUrgency = 'urgent'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ChoiceChip(
+                    label: const Center(child: Text('Emergency / STAT')),
+                    selected: _labUrgency == 'stat',
+                    selectedColor: Colors.red[700],
+                    labelStyle: TextStyle(color: _labUrgency == 'stat' ? Colors.white : AppColors.textDark, fontWeight: FontWeight.w600),
+                    onSelected: (v) => setState(() => _labUrgency = 'stat'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Instructions for Patient & Laboratory
+          _sectionCard(
+            title: 'Instructions for Patient & Laboratory',
+            icon: Icons.edit_note_outlined,
+            child: TextFormField(
+              controller: _labInstructionsCtrl,
+              maxLines: 3,
+              decoration: InputDecoration(
+                hintText: 'e.g. Fasting required for 8 hours prior to blood draw. Please submit results promptly.',
+                filled: true,
+                fillColor: Colors.grey[50],
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Color(0xFFE5E7EB))),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Action Button
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF0F766E),
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+              onPressed: _isSubmittingLab ? null : _submitLabAnalysisRequest,
+              icon: _isSubmittingLab
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : const Icon(Icons.send_rounded, color: Colors.white),
+              label: const Text(
+                'Send Lab Request to Patient (Hold Rx)',
+                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: Colors.white),
+              ),
+            ),
+          ),
+          const SizedBox(height: 30),
+        ],
+      ),
+    );
+  }
+
   Widget _buildBottomAction() {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -1220,11 +1493,31 @@ class _WritePrescriptionScreenState extends State<WritePrescriptionScreen> with 
           BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 8, offset: const Offset(0, -2)),
         ],
       ),
-      child: PharmaButton(
-        label: 'Save Consultation & Issue Prescription',
-        icon: Icons.check_circle_outline,
-        isLoading: _isSaving,
-        onPressed: _saveConsultationAndPrescription,
+      child: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                side: const BorderSide(color: Color(0xFF0F766E), width: 1.5),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
+              onPressed: () => _tabController.animateTo(1),
+              icon: const Icon(Icons.science_outlined, color: Color(0xFF0F766E)),
+              label: const Text('Order Lab Tests', style: TextStyle(fontWeight: FontWeight.w700, color: Color(0xFF0F766E))),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            flex: 2,
+            child: PharmaButton(
+              label: 'Issue Prescription (Rx)',
+              icon: Icons.check_circle_outline,
+              isLoading: _isSaving,
+              onPressed: _saveConsultationAndPrescription,
+            ),
+          ),
+        ],
       ),
     );
   }

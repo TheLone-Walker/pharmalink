@@ -504,10 +504,208 @@ const getMedicalHistory = async (req, res, next) => {
   }
 };
 
+// ─── Lab Analysis Workflow ──────────────────────────────────────────────────
+
+/**
+ * Doctor requests laboratory analysis before issuing prescription
+ */
+const requestLabAnalysis = async (req, res, next) => {
+  try {
+    const {
+      patientId,
+      appointmentId,
+      symptoms,
+      vitals,
+      preliminaryDiagnosis,
+      clinicalNotes,
+      labTests, // e.g. ['Malaria RDT', 'CBC/NFS', 'Widal Test', 'Fasting Blood Sugar']
+      urgency,  // 'routine' | 'urgent' | 'stat'
+      instructions,
+    } = req.body;
+
+    if (!patientId) {
+      return res.status(400).json({ success: false, message: 'patientId is required' });
+    }
+
+    if (!labTests || !Array.isArray(labTests) || labTests.length === 0) {
+      return res.status(400).json({ success: false, message: 'At least one lab test must be requested' });
+    }
+
+    const doctorUser = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      include: { doctorProfile: true },
+    });
+    const doctorName = doctorUser?.name || 'Dr. Specialist';
+    const hospitalName = doctorUser?.doctorProfile?.hospital || 'PharmaLink Partner Clinic';
+
+    const labRequestData = {
+      type: 'lab_analysis_request',
+      doctorName,
+      hospitalName,
+      doctorId: req.user.id,
+      appointmentId: appointmentId || null,
+      symptoms: symptoms || '',
+      vitals: vitals || {},
+      preliminaryDiagnosis: preliminaryDiagnosis || 'Investigation Pending',
+      clinicalNotes: clinicalNotes || '',
+      labTests: labTests.map(t => typeof t === 'string' ? { name: t, status: 'pending' } : t),
+      urgency: urgency || 'routine',
+      instructions: instructions || 'Please visit an accredited medical laboratory or clinic to perform the requested tests and upload your results here.',
+      labStatus: 'pending_results',
+      requestedAt: new Date().toISOString(),
+    };
+
+    const medicalHistory = await prisma.medicalHistory.create({
+      data: {
+        patientId,
+        doctorId: req.user.id,
+        diagnosis: `🔬 Lab Investigation Required: ${preliminaryDiagnosis || 'Clinical Assessment'}`,
+        notes: JSON.stringify(labRequestData),
+        date: new Date(),
+      },
+    });
+
+    if (appointmentId) {
+      await prisma.appointment.update({
+        where: { id: appointmentId },
+        data: { status: 'confirmed' }, // Keep active/confirmed until lab results return
+      }).catch(() => {});
+    }
+
+    // Send high-priority notification to patient
+    const testsSummary = labTests.map(t => typeof t === 'string' ? t : t.name).slice(0, 3).join(', ');
+    await notificationService.send(
+      patientId,
+      '🔬 Lab Tests Required Before Prescription',
+      `Dr. ${doctorName} has ordered lab analyses (${testsSummary}${labTests.length > 3 ? '...' : ''}) to confirm your diagnosis before issuing medications.`,
+      'lab_request'
+    ).catch(() => {});
+
+    const { emitToUser } = require('../services/socket.service');
+    emitToUser(patientId, 'lab:request', { historyId: medicalHistory.id, labRequestData });
+
+    res.status(201).json({
+      success: true,
+      data: { id: medicalHistory.id, ...labRequestData },
+      message: 'Laboratory test request has been sent to the patient.',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Patient submits laboratory test results
+ */
+const submitLabResults = async (req, res, next) => {
+  try {
+    const { historyId } = req.params;
+    const { resultsText, labName, testDate, fileUrls, findings } = req.body;
+
+    const record = await prisma.medicalHistory.findUnique({
+      where: { id: historyId },
+      include: { patient: { select: { name: true, phone: true } } },
+    });
+
+    if (!record) {
+      return res.status(404).json({ success: false, message: 'Lab request record not found' });
+    }
+
+    let parsed = {};
+    try {
+      parsed = JSON.parse(record.notes || '{}');
+    } catch (_) {}
+
+    parsed.labStatus = 'results_submitted';
+    parsed.labResults = {
+      resultsText: resultsText || findings || '',
+      labName: labName || 'Certified Clinical Laboratory',
+      testDate: testDate || new Date().toISOString(),
+      fileUrls: fileUrls || [],
+      submittedAt: new Date().toISOString(),
+    };
+
+    const updated = await prisma.medicalHistory.update({
+      where: { id: historyId },
+      data: {
+        diagnosis: `🔬 Lab Results Submitted: ${parsed.preliminaryDiagnosis || 'Review Pending'}`,
+        notes: JSON.stringify(parsed),
+      },
+    });
+
+    // Notify doctor
+    if (record.doctorId) {
+      const patientName = record.patient?.name || 'Patient';
+      await notificationService.send(
+        record.doctorId,
+        '🔬 Lab Results Submitted by Patient',
+        `${patientName} has submitted laboratory test results for your review. You can now finalize their diagnosis and prescription.`,
+        'lab_results'
+      ).catch(() => {});
+
+      const { emitToUser } = require('../services/socket.service');
+      emitToUser(record.doctorId, 'lab:results_submitted', { historyId, updated });
+    }
+
+    res.json({
+      success: true,
+      data: updated,
+      message: 'Lab results submitted successfully. Your doctor has been notified.',
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Get Lab Requests (for Doctor and Patient)
+ */
+const getLabRequests = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const role = req.user.role;
+
+    const where = role === 'doctor' ? { doctorId: userId } : { patientId: userId };
+    const history = await prisma.medicalHistory.findMany({
+      where,
+      include: {
+        patient: { select: { name: true, phone: true, email: true } },
+      },
+      orderBy: { date: 'desc' },
+    });
+
+    const labRequests = [];
+    for (const h of history) {
+      try {
+        const parsed = JSON.parse(h.notes || '{}');
+        if (parsed.type === 'lab_analysis_request' || parsed.labTests || parsed.labStatus) {
+          labRequests.push({
+            historyId: h.id,
+            patientId: h.patientId,
+            doctorId: h.doctorId,
+            patientName: h.patient?.name,
+            diagnosis: h.diagnosis,
+            date: h.date,
+            ...parsed,
+          });
+        }
+      } catch (_) {}
+    }
+
+    res.json({ success: true, data: labRequests });
+  } catch (err) {
+    next(err);
+  }
+};
+
 module.exports = {
   issue,
   getMyPrescriptions,
   sendToPharmacy,
   fulfill,
   getMedicalHistory,
+  requestLabAnalysis,
+  submitLabResults,
+  getLabRequests,
 };
+
