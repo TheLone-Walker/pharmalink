@@ -4,6 +4,8 @@ import '../../services/api_service.dart';
 import '../../utils/constants.dart';
 import 'patient_appointments_screen.dart';
 import 'my_orders_screen.dart';
+import 'night_guard_screen.dart';
+import 'digital_receipt_screen.dart';
 
 class ChatbotScreen extends StatefulWidget {
   const ChatbotScreen({super.key});
@@ -21,13 +23,13 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
   final List<String> _quickPrompts = [
     '📅 Book appointment with Dr. Amadou',
     '💊 Order Paracetamol 500mg for me',
+    '🌙 Night Guard pharmacies & emergency doctors 24/7',
+    '📄 Can I buy antibiotics without prescription?',
+    '🧾 How do digital receipts work for my orders?',
     '📱 Schedule Telemedicine Video Call',
     '🏥 Find doctors at Hôpital Central',
     '💰 Cheapest pharmacy for Coartem',
-    '🔬 What lab tests do I need before consultation?',
     '🦟 Malaria symptoms & ACT treatment',
-    '📋 Proper dosage & instructions for Amoxicillin',
-    '⚠️ Check drug interactions and warnings',
     '🛵 Track my medication delivery',
   ];
 
@@ -36,7 +38,7 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
     super.initState();
     _messages.add({
       'role': 'bot',
-      'text': 'Hello! I\'m PharmaLink Autonomous Clinical Agent 🩺.\n\nI can:\n• **Book doctor appointments** directly for you.\n• **Order medications** from the cheapest pharmacy in stock.\n• Provide clinical guidance & medication instructions.',
+      'text': 'Hello! I\'m PharmaLink Autonomous Clinical Agent 🩺.\n\nI can:\n• **Book doctor appointments** step-by-step with instant dashboard syncing.\n• **Order medications** with OTC/Prescription checks & price comparison.\n• **Find Night Guard pharmacies & 24/7 emergency services**.\n• Provide clinical guidance & digital receipts for all payments.',
     });
   }
 
@@ -243,6 +245,22 @@ class _ChatbotScreenState extends State<ChatbotScreen> {
                                         context,
                                         MaterialPageRoute(
                                           builder: (_) => const MyOrdersScreen(),
+                                        ),
+                                      );
+                                    } else if (act['type'] == 'night_guard') {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => const NightGuardScreen(),
+                                        ),
+                                      );
+                                    } else if (act['type'] == 'receipt') {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (_) => DigitalReceiptScreen(
+                                            orderId: act['id'] ?? '',
+                                          ),
                                         ),
                                       );
                                     }
