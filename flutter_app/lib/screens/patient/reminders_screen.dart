@@ -423,7 +423,7 @@ class _RemindersScreenState extends State<RemindersScreen> {
                           context: ctx,
                           initialTime: TimeOfDay.now(),
                         );
-                        if (t != null) {
+                        if (t != null && ctx.mounted) {
                           final formatted = t.format(ctx);
                           setModal(() => reminderTimeStr = formatted);
                         }
@@ -584,8 +584,10 @@ class _RemindersScreenState extends State<RemindersScreen> {
                     }
 
                     // 3. Close Modal Immediately
-                    if (mounted) {
+                    if (ctx.mounted) {
                       Navigator.pop(ctx);
+                    }
+                    if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: Text(isEdit ? '✅ Reminder updated successfully!' : '✅ Reminder for $medName saved!'),
@@ -817,6 +819,7 @@ class _RemindersScreenState extends State<RemindersScreen> {
               ),
               Switch(
                 value: isActive,
+                activeTrackColor: AppColors.primaryLight,
                 activeColor: AppColors.primary,
                 onChanged: (val) => _toggleReminder(r, val),
               ),
