@@ -1,5 +1,8 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../services/api_service.dart';
 import '../../services/notification_service.dart';
 import '../../utils/constants.dart';
@@ -14,7 +17,9 @@ class RemindersScreen extends StatefulWidget {
 class _RemindersScreenState extends State<RemindersScreen> {
   final _api = ApiService();
   List<Map<String, dynamic>> _reminders = [];
+  List<Map<String, dynamic>> _prescriptionSuggestions = [];
   bool _loading = true;
+  static const String _storageKey = 'pharmalink_local_reminders_v2';
 
   static const List<Map<String, dynamic>> soundThemes = [
     {
@@ -65,36 +70,101 @@ class _RemindersScreenState extends State<RemindersScreen> {
   void initState() {
     super.initState();
     _loadReminders();
+    _loadPrescriptionSuggestions();
   }
 
+  /// Load local cache immediately, then sync with backend in background
   Future<void> _loadReminders() async {
     setState(() => _loading = true);
+
+    // 1. Instantly load from local storage
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final localData = prefs.getString(_storageKey);
+      if (localData != null) {
+        final decoded = jsonDecode(localData) as List;
+        setState(() {
+          _reminders = decoded.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        });
+      }
+    } catch (_) {}
+
+    // 2. Fetch from cloud API and merge
     try {
       final res = await _api.get('/reminders');
-      final list = res.data['data'] as List? ?? [];
-      setState(() {
-        _reminders = list.cast<Map<String, dynamic>>();
-      });
-    } catch (_) {} finally {
+      final cloudList = (res.data['data'] as List? ?? [])
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+
+      if (cloudList.isNotEmpty) {
+        // Merge cloud with local
+        final Map<String, Map<String, dynamic>> merged = {};
+        for (final r in _reminders) {
+          merged[r['id'].toString()] = r;
+        }
+        for (final c in cloudList) {
+          merged[c['id'].toString()] = c;
+        }
+        _reminders = merged.values.toList();
+        await _saveToLocalStorage();
+      }
+    } catch (_) {
+      // Offline or network error - local storage takes over seamlessly
+    } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
+  Future<void> _saveToLocalStorage() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_storageKey, jsonEncode(_reminders));
+    } catch (_) {}
+  }
+
+  Future<void> _loadPrescriptionSuggestions() async {
+    try {
+      final res = await _api.get('/prescriptions/my');
+      final prescriptions = res.data['data'] as List? ?? [];
+      final List<Map<String, dynamic>> items = [];
+
+      for (final rx in prescriptions) {
+        final rxItems = rx['items'] as List? ?? [];
+        for (final item in rxItems) {
+          items.add({
+            'medicationName': item['medicationName'] ?? '',
+            'dosage': item['dosage'] ?? '1 dose',
+            'frequency': item['instructions'] ?? item['dosage'] ?? 'Daily',
+            'reminderTime': item['reminderTime'] ?? '08:00 AM, 08:00 PM',
+          });
+        }
+      }
+      if (mounted) {
+        setState(() => _prescriptionSuggestions = items);
+      }
+    } catch (_) {}
+  }
+
   Future<void> _toggleReminder(Map<String, dynamic> r, bool val) async {
+    HapticFeedback.lightImpact();
+    setState(() {
+      r['isActive'] = val;
+    });
+    await _saveToLocalStorage();
+
+    // Async sync to server
     try {
       await _api.patch('/reminders/${r['id']}', data: {'isActive': val});
-      setState(() {
-        r['isActive'] = val;
-      });
+    } catch (_) {}
+
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(val ? 'Reminder activated for ${r['medicationName']}' : 'Reminder paused for ${r['medicationName']}'),
+          content: Text(val ? '🔔 Reminder enabled for ${r['medicationName']}' : '⏸️ Reminder paused for ${r['medicationName']}'),
           backgroundColor: val ? AppColors.primary : Colors.grey[700],
           duration: const Duration(seconds: 2),
         ),
       );
-    } catch (_) {
-      _loadReminders();
     }
   }
 
@@ -104,7 +174,7 @@ class _RemindersScreenState extends State<RemindersScreen> {
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text('Delete Reminder?'),
-        content: Text('Are you sure you want to remove the reminder for $medName?'),
+        content: Text('Are you sure you want to remove the medication reminder for $medName?'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
           ElevatedButton(
@@ -117,15 +187,22 @@ class _RemindersScreenState extends State<RemindersScreen> {
     );
 
     if (confirm == true) {
+      HapticFeedback.mediumImpact();
+      setState(() {
+        _reminders.removeWhere((r) => r['id'].toString() == id.toString());
+      });
+      await _saveToLocalStorage();
+
+      // Async delete from backend
       try {
         await _api.delete('/reminders/$id');
-        _loadReminders();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Reminder for $medName removed.'), backgroundColor: Colors.black87),
-          );
-        }
       } catch (_) {}
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Reminder for $medName removed.'), backgroundColor: Colors.black87),
+        );
+      }
     }
   }
 
@@ -208,6 +285,47 @@ class _RemindersScreenState extends State<RemindersScreen> {
                   ],
                 ),
                 const Divider(height: 20),
+
+                // Prescription Quick Suggestions (if any)
+                if (!isEdit && _prescriptionSuggestions.isNotEmpty) ...[
+                  Row(
+                    children: [
+                      const Icon(Icons.auto_awesome, color: AppColors.primary, size: 14),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Suggestions from Doctor Prescriptions:',
+                        style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.primary),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: Row(
+                      children: _prescriptionSuggestions.map((s) {
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 8),
+                          child: ActionChip(
+                            avatar: const Icon(Icons.medication, size: 14, color: AppColors.primary),
+                            label: Text('${s['medicationName']} (${s['dosage']})', style: const TextStyle(fontSize: 11)),
+                            backgroundColor: const Color(0xFFE8F5E9),
+                            onPressed: () {
+                              setModal(() {
+                                medCtrl.text = s['medicationName'] ?? '';
+                                dosageCtrl.text = s['dosage'] ?? '';
+                                freqCtrl.text = s['frequency'] ?? '';
+                                if (s['reminderTime'] != null && (s['reminderTime'] as String).isNotEmpty) {
+                                  reminderTimeStr = s['reminderTime'];
+                                }
+                              });
+                            },
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
 
                 // 1. Medication Info
                 PharmaField(
@@ -325,16 +443,19 @@ class _RemindersScreenState extends State<RemindersScreen> {
                       label: const Text('Test Sound', style: TextStyle(fontSize: 11, color: AppColors.primary, fontWeight: FontWeight.w700)),
                       onPressed: () async {
                         final chosen = soundThemes.firstWhere((s) => s['id'] == selectedSound, orElse: () => soundThemes[0]);
-                        await NotificationService().show(
-                          id: 777,
-                          title: '💊 Pill Reminder (${chosen['title']})',
-                          body: 'Time to take ${medCtrl.text.trim().isNotEmpty ? medCtrl.text.trim() : "your medication"} (${dosageCtrl.text.trim().isNotEmpty ? dosageCtrl.text.trim() : "1 dose"})',
-                          payload: 'reminder_test',
-                        );
+                        HapticFeedback.mediumImpact();
+                        try {
+                          await NotificationService().show(
+                            id: 777,
+                            title: '💊 Pill Reminder (${chosen['title']})',
+                            body: 'Time to take ${medCtrl.text.trim().isNotEmpty ? medCtrl.text.trim() : "your medication"} (${dosageCtrl.text.trim().isNotEmpty ? dosageCtrl.text.trim() : "1 dose"})',
+                            payload: 'reminder_test',
+                          );
+                        } catch (_) {}
                         if (mounted) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             SnackBar(
-                              content: Text('🔔 Notification sound "${chosen['title']}" played!'),
+                              content: Text('🔔 Sound theme "${chosen['title']}" triggered!'),
                               backgroundColor: AppColors.primary,
                               duration: const Duration(seconds: 2),
                             ),
@@ -353,7 +474,10 @@ class _RemindersScreenState extends State<RemindersScreen> {
                     final color = s['color'] as Color;
                     return InkWell(
                       borderRadius: BorderRadius.circular(10),
-                      onTap: () => setModal(() => selectedSound = s['id']),
+                      onTap: () {
+                        HapticFeedback.selectionClick();
+                        setModal(() => selectedSound = s['id']);
+                      },
                       child: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                         decoration: BoxDecoration(
@@ -408,7 +532,8 @@ class _RemindersScreenState extends State<RemindersScreen> {
                   icon: Icons.check,
                   isLoading: isSubmitting,
                   onPressed: () async {
-                    if (medCtrl.text.trim().isEmpty) {
+                    final medName = medCtrl.text.trim();
+                    if (medName.isEmpty) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(content: Text('Please enter medication name')),
                       );
@@ -417,46 +542,77 @@ class _RemindersScreenState extends State<RemindersScreen> {
 
                     setModal(() => isSubmitting = true);
 
-                    final payload = {
-                      'medicationName': medCtrl.text.trim(),
+                    final String reminderId = isEdit ? existing['id'].toString() : 'rem_${DateTime.now().millisecondsSinceEpoch}';
+                    final newReminderData = {
+                      'id': reminderId,
+                      'medicationName': medName,
                       'dosage': dosageCtrl.text.trim().isNotEmpty ? dosageCtrl.text.trim() : '1 dose',
                       'frequency': freqCtrl.text.trim().isNotEmpty ? freqCtrl.text.trim() : 'Daily',
                       'reminderTime': reminderTimeStr,
                       'sound': selectedSound,
                       'notes': notesCtrl.text.trim(),
+                      'isActive': isEdit ? (existing['isActive'] ?? true) : true,
+                      'createdAt': isEdit ? (existing['createdAt'] ?? DateTime.now().toIso8601String()) : DateTime.now().toIso8601String(),
                     };
 
+                    // 1. Guaranteed Local Persistence Update
+                    HapticFeedback.heavyImpact();
+                    setState(() {
+                      if (isEdit) {
+                        final idx = _reminders.indexWhere((r) => r['id'].toString() == reminderId);
+                        if (idx != -1) {
+                          _reminders[idx] = newReminderData;
+                        } else {
+                          _reminders.insert(0, newReminderData);
+                        }
+                      } else {
+                        _reminders.insert(0, newReminderData);
+                      }
+                    });
+                    await _saveToLocalStorage();
+
+                    // 2. Safe local notification trigger
+                    try {
+                      await NotificationService().show(
+                        id: reminderId.hashCode,
+                        title: 'Medication Reminder 💊',
+                        body: 'Scheduled alarm for $medName at $reminderTimeStr',
+                        payload: 'reminder:$reminderId',
+                      );
+                    } catch (notifErr) {
+                      debugPrint('Local notification notice: $notifErr');
+                    }
+
+                    // 3. Close Modal Immediately
+                    if (mounted) {
+                      Navigator.pop(ctx);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(isEdit ? '✅ Reminder updated successfully!' : '✅ Reminder for $medName saved!'),
+                          backgroundColor: AppColors.primary,
+                        ),
+                      );
+                    }
+
+                    // 4. Background Cloud Sync (Non-blocking)
                     try {
                       if (isEdit) {
-                        await _api.patch('/reminders/${existing['id']}', data: payload);
+                        await _api.patch('/reminders/$reminderId', data: newReminderData);
                       } else {
-                        await _api.post('/reminders', data: payload);
+                        final res = await _api.post('/reminders', data: newReminderData);
+                        if (res.data?['data']?['id'] != null) {
+                          final serverId = res.data['data']['id'].toString();
+                          setState(() {
+                            final idx = _reminders.indexWhere((r) => r['id'].toString() == reminderId);
+                            if (idx != -1) {
+                              _reminders[idx]['id'] = serverId;
+                            }
+                          });
+                          await _saveToLocalStorage();
+                        }
                       }
-
-                      // Schedule local notification on device
-                      await NotificationService().show(
-                        id: DateTime.now().millisecondsSinceEpoch ~/ 1000,
-                        title: 'Reminder Created 💊',
-                        body: 'Scheduled alarm for ${payload['medicationName']} at $reminderTimeStr',
-                      );
-
-                      if (mounted) {
-                        Navigator.pop(ctx);
-                        _loadReminders();
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(isEdit ? 'Reminder updated successfully!' : '✅ Reminder for ${payload['medicationName']} saved!'),
-                            backgroundColor: AppColors.primary,
-                          ),
-                        );
-                      }
-                    } catch (e) {
-                      if (mounted) {
-                        setModal(() => isSubmitting = false);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('Could not save reminder: $e'), backgroundColor: Colors.red),
-                        );
-                      }
+                    } catch (cloudErr) {
+                      debugPrint('Cloud sync in background (safe): $cloudErr');
                     }
                   },
                 ),
