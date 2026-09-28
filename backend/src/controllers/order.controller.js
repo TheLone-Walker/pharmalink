@@ -41,12 +41,12 @@ const createOrder = async (req, res, next) => {
         });
       }
 
-      // Verify that prescription exists, belongs to patient, and is valid
+      // Verify that prescription exists, belongs to patient, and is valid (not cancelled)
       const prescription = await prisma.prescription.findFirst({
         where: {
           id: prescriptionId,
           patientId,
-          status: { in: ['issued', 'sent_to_pharmacy', 'approved', 'active'] },
+          status: { in: ['issued', 'sent_to_pharmacy', 'fulfilled'] },
         },
         include: { doctor: { select: { name: true } }, items: true },
       });

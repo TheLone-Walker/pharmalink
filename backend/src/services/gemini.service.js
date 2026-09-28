@@ -375,7 +375,7 @@ class GeminiService {
             approvedRx = await prisma.prescription.findFirst({
               where: {
                 patientId: userId,
-                status: 'approved',
+                status: { in: ['issued', 'sent_to_pharmacy', 'fulfilled'] },
               },
               orderBy: { createdAt: 'desc' },
             });
