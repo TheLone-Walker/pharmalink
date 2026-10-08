@@ -149,62 +149,106 @@ class _ManageOrdersScreenState extends State<ManageOrdersScreen> with SingleTick
   // 3. Open OTP Verification Modal (for In-Person Pickup or Handover)
   void _openVerifyOtpModal(Map<String, dynamic> order) {
     final otpCtrl = TextEditingController();
+    bool submitting = false;
+
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: Row(
-          children: const [
-            Icon(Icons.verified_user_outlined, color: AppColors.primary, size: 24),
-            SizedBox(width: 8),
-            Text('Validate Customer OTP', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Enter the 4-digit OTP provided by customer ${order['patient']?['name'] ?? ''} to validate handover:', style: const TextStyle(fontSize: 13, color: AppColors.textGrey)),
-            const SizedBox(height: 16),
-            TextField(
-              controller: otpCtrl,
-              keyboardType: TextInputType.number,
-              maxLength: 6,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, letterSpacing: 6, color: AppColors.primary),
-              decoration: InputDecoration(
-                hintText: '• • • •',
-                hintStyle: const TextStyle(color: Colors.grey, letterSpacing: 4),
-                filled: true,
-                fillColor: const Color(0xFFF1F5F9),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.primary)),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: const BoxDecoration(color: Color(0xFFDCFCE7), shape: BoxShape.circle),
+                child: const Icon(Icons.verified_user_rounded, color: Color(0xFF15803D), size: 20),
               ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text('Patient Counter Pickup OTP', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Customer: ${order['patient']?['name'] ?? 'Patient'}',
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Ask the customer for the 4-digit OTP or Pickup Pass (e.g. PK-XXXX) displayed on their PharmaLink app screen:',
+                style: TextStyle(fontSize: 12, color: AppColors.textGrey, height: 1.4),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: otpCtrl,
+                textCapitalization: TextCapitalization.characters,
+                textAlign: TextAlign.center,
+                autofocus: true,
+                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, letterSpacing: 4, color: AppColors.primary),
+                decoration: InputDecoration(
+                  hintText: 'e.g. 4821 or PK-4821',
+                  hintStyle: const TextStyle(color: Colors.black26, fontSize: 14, letterSpacing: 1, fontWeight: FontWeight.w500),
+                  filled: true,
+                  fillColor: const Color(0xFFF1F5F9),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.primary)),
+                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.primary, width: 2)),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: submitting ? null : () => Navigator.pop(ctx),
+              child: const Text('Cancel', style: TextStyle(color: AppColors.textGrey)),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF10B981),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              ),
+              onPressed: submitting ? null : () async {
+                final code = otpCtrl.text.trim();
+                if (code.isEmpty) return;
+                setModalState(() => submitting = true);
+                try {
+                  final res = await _api.post('/pharmacist/orders/${order['id']}/verify-otp', data: {'otp': code});
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  _loadOrders();
+                  final msg = res.data?['message'] ?? 'Patient OTP verified! Order marked as Picked Up.';
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('✅ $msg'), backgroundColor: const Color(0xFF10B981)),
+                    );
+                  }
+                } catch (e) {
+                  setModalState(() => submitting = false);
+                  String errText = 'Validation failed: Invalid OTP code.';
+                  final errStr = e.toString();
+                  if (errStr.contains('Invalid')) {
+                    errText = '🚫 Invalid pickup OTP code. Please re-check the code on the customer\'s app.';
+                  } else {
+                    errText = 'Error: $e';
+                  }
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(errText), backgroundColor: Colors.red),
+                    );
+                  }
+                }
+              },
+              child: submitting
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                  : const Text('Verify & Complete', style: TextStyle(fontWeight: FontWeight.w700)),
             ),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: AppColors.primary),
-            onPressed: () async {
-              final code = otpCtrl.text.trim();
-              if (code.isEmpty) return;
-              try {
-                await _api.post('/pharmacist/orders/${order['id']}/verify-otp', data: {'otp': code});
-                Navigator.pop(ctx);
-                _loadOrders();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('OTP Validated! Order marked as completed.'), backgroundColor: AppColors.primary),
-                );
-              } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Validation failed: $e'), backgroundColor: Colors.red),
-                );
-              }
-            },
-            child: const Text('Verify & Complete'),
-          ),
-        ],
       ),
     );
   }
@@ -394,7 +438,7 @@ class _ManageOrdersScreenState extends State<ManageOrdersScreen> with SingleTick
                     Text('⏱️ $timeAgo', style: const TextStyle(fontSize: 11, color: AppColors.textGrey, fontWeight: FontWeight.w500)),
                   ],
                 ),
-                _buildStatusBadge(status),
+                _buildStatusBadge(status, orderType),
               ],
             ),
           ),
@@ -592,6 +636,29 @@ class _ManageOrdersScreenState extends State<ManageOrdersScreen> with SingleTick
                     ],
                   ),
                 ] else if (status == 'confirmed' || status == 'preparing') ...[
+                  if (!isDelivery && status == 'preparing') ...[
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF0FDF4),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFF86EFAC)),
+                      ),
+                      child: Row(
+                        children: const [
+                          Icon(Icons.storefront_rounded, size: 18, color: Color(0xFF16A34A)),
+                          SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Packaged & awaiting customer. Ask patient for their Pickup OTP / Pass code to complete.',
+                              style: TextStyle(fontSize: 11.5, color: Color(0xFF15803D), fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                   Row(
                     children: [
                       if (isDelivery) ...[
@@ -608,29 +675,45 @@ class _ManageOrdersScreenState extends State<ManageOrdersScreen> with SingleTick
                           ),
                         ),
                       ] else ...[
-                        Expanded(
-                          child: ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.teal[700],
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                              padding: const EdgeInsets.symmetric(vertical: 10),
+                        if (status == 'confirmed') ...[
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF0D9488),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                padding: const EdgeInsets.symmetric(vertical: 10),
+                              ),
+                              icon: const Icon(Icons.inventory_2_outlined, size: 18),
+                              label: const Text('Package & Mark Ready', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                              onPressed: () => _markReady(id),
                             ),
-                            icon: const Icon(Icons.storefront, size: 18),
-                            label: const Text('Mark Ready for Pickup', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
-                            onPressed: () => _markReady(id),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        OutlinedButton.icon(
-                          style: OutlinedButton.styleFrom(
-                            side: const BorderSide(color: AppColors.primary),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                          const SizedBox(width: 8),
+                          OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              side: const BorderSide(color: Color(0xFF10B981)),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                            ),
+                            icon: const Icon(Icons.verified_user_outlined, size: 16, color: Color(0xFF10B981)),
+                            label: const Text('Verify OTP', style: TextStyle(fontSize: 11, color: Color(0xFF10B981), fontWeight: FontWeight.w700)),
+                            onPressed: () => _openVerifyOtpModal(order),
                           ),
-                          icon: const Icon(Icons.verified_outlined, size: 16, color: AppColors.primary),
-                          label: const Text('Verify OTP', style: TextStyle(fontSize: 11, color: AppColors.primary, fontWeight: FontWeight.w700)),
-                          onPressed: () => _openVerifyOtpModal(order),
-                        ),
+                        ] else ...[
+                          Expanded(
+                            child: ElevatedButton.icon(
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF10B981),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                padding: const EdgeInsets.symmetric(vertical: 12),
+                                elevation: 1,
+                              ),
+                              icon: const Icon(Icons.verified_user_rounded, size: 20),
+                              label: const Text('Verify Patient Pickup OTP & Hand Over', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800)),
+                              onPressed: () => _openVerifyOtpModal(order),
+                            ),
+                          ),
+                        ],
                       ],
                     ],
                   ),
@@ -659,23 +742,37 @@ class _ManageOrdersScreenState extends State<ManageOrdersScreen> with SingleTick
     );
   }
 
-  Widget _buildStatusBadge(String status) {
+  Widget _buildStatusBadge(String status, [String? orderType]) {
     Color bg = const Color(0xFFFEF3C7);
     Color text = const Color(0xFFB45309);
     String label = 'Pending Validation';
 
-    if (status == 'confirmed' || status == 'preparing') {
+    if (status == 'confirmed') {
       bg = const Color(0xFFDBEAFE);
       text = const Color(0xFF1E40AF);
-      label = 'Preparing Meds';
+      label = 'Confirmed / In Prep';
+    } else if (status == 'preparing') {
+      if (orderType == 'pickup') {
+        bg = const Color(0xFFDCFCE7);
+        text = const Color(0xFF15803D);
+        label = 'Ready for Pickup 🏪';
+      } else {
+        bg = const Color(0xFFDBEAFE);
+        text = const Color(0xFF1E40AF);
+        label = 'Packaging Meds 📦';
+      }
     } else if (status == 'out_for_delivery') {
       bg = const Color(0xFFEDE9FE);
       text = const Color(0xFF6D28D9);
       label = 'Out for Delivery 🛵';
-    } else if (status == 'picked_up' || status == 'delivered') {
+    } else if (status == 'picked_up') {
       bg = const Color(0xFFDCFCE7);
       text = const Color(0xFF166534);
-      label = 'Completed ✅';
+      label = 'Picked Up ✅';
+    } else if (status == 'delivered') {
+      bg = const Color(0xFFDCFCE7);
+      text = const Color(0xFF166534);
+      label = 'Delivered ✅';
     } else if (status == 'cancelled') {
       bg = const Color(0xFFFEE2E2);
       text = const Color(0xFF991B1B);

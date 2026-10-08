@@ -83,7 +83,9 @@ const createOrder = async (req, res, next) => {
       }
     }
 
-    const pickupCode = orderType === 'pickup' ? generatePickupCode() : null;
+    const rawOtp = generateOTP(4);
+    const pickupCode = orderType === 'pickup' ? `PK-${rawOtp}` : null;
+    const orderOtp = rawOtp;
 
     const order = await prisma.order.create({
       data: {
@@ -95,6 +97,7 @@ const createOrder = async (req, res, next) => {
         deliveryLat: deliveryLat ? parseFloat(deliveryLat) : null,
         deliveryLng: deliveryLng ? parseFloat(deliveryLng) : null,
         pickupCode,
+        otp: orderOtp,
         items: { create: orderItems },
       },
       include: {

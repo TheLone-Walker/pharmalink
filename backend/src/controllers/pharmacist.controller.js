@@ -139,7 +139,9 @@ const markReady = async (req, res, next) => {
     });
     if (!order) throw { status: 404, message: 'Order not found' };
 
-    const newStatus = order.orderType === 'pickup' ? 'picked_up' : 'preparing';
+    // Orders marked ready are set to 'preparing' (packaged & awaiting counter handover or courier)
+    // NEVER automatically mark as 'picked_up' without counter OTP validation!
+    const newStatus = 'preparing';
     const updated = await prisma.order.update({
       where: { id: req.params.id },
       data: { status: newStatus },
@@ -151,15 +153,22 @@ const markReady = async (req, res, next) => {
     emitToUser(order.patientId, 'order:updated', updated);
 
     if (order.orderType === 'pickup') {
+      const code = order.pickupCode || (order.otp ? `PK-${order.otp}` : 'your pass code');
       await notificationService.send(
         order.patientId,
-        'Ready for Pickup at Pharmacy',
-        `Your medications are packaged and ready for pickup at ${order.pharmacy?.pharmacyName || 'the pharmacy'}. Please present your pickup code ${order.pickupCode || order.otp || ''}.`,
+        'Medications Ready for Counter Pickup',
+        `Your medications are packaged and ready for pickup at ${order.pharmacy?.pharmacyName || 'the pharmacy'}. Please present your pickup code (${code}) at the counter.`,
         'order'
       );
     }
 
-    res.json({ success: true, data: updated });
+    res.json({
+      success: true,
+      message: order.orderType === 'pickup'
+        ? 'Medications packaged & ready for pickup. Customer notified to present OTP at counter.'
+        : 'Order marked as preparing.',
+      data: updated,
+    });
   } catch (err) { next(err); }
 };
 
@@ -167,6 +176,16 @@ const markReady = async (req, res, next) => {
 const updateOrderStatus = async (req, res, next) => {
   try {
     const { status } = req.body;
+    const existing = await prisma.order.findUnique({ where: { id: req.params.id } });
+    if (!existing) throw { status: 404, message: 'Order not found' };
+
+    if (existing.orderType === 'pickup' && status === 'picked_up') {
+      return res.status(400).json({
+        success: false,
+        message: 'Pickup orders cannot be completed without OTP verification. Please verify the patient\'s counter OTP pass.',
+      });
+    }
+
     const order = await prisma.order.update({
       where: { id: req.params.id },
       data: { status },
@@ -331,23 +350,54 @@ const verifyPickupOtp = async (req, res, next) => {
     const { otp } = req.body;
     const { id: orderId } = req.params;
 
+    if (!otp || typeof otp !== 'string' || !otp.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide the patient\'s pickup OTP / Pass code.',
+      });
+    }
+
     const order = await prisma.order.findUnique({
       where: { id: orderId },
-      include: { patient: true },
+      include: { patient: true, pharmacy: true },
     });
     if (!order) throw { status: 404, message: 'Order not found' };
 
-    const expectedOtp = order.otp || order.pickupCode;
-    if (order.otp && order.otp !== otp && order.pickupCode !== otp) {
-      return res.status(400).json({ success: false, message: 'Invalid OTP verification code' });
+    if (order.status === 'picked_up' || order.status === 'delivered') {
+      return res.status(400).json({
+        success: false,
+        message: 'This order has already been verified and handed over.',
+      });
+    }
+
+    // Normalize codes for flexible matching:
+    // Support formats: "4821", "PK-4821", "pk-4821", "OTP-4821", "PL4821"
+    const normalize = (v) => (v || '').toString().trim().toUpperCase().replace(/^(PK-|OTP-|PL)/, '');
+    const inputClean = normalize(otp);
+    const inputRaw = otp.toString().trim().toUpperCase();
+
+    const orderOtpClean = normalize(order.otp);
+    const orderCodeClean = normalize(order.pickupCode);
+    const orderOtpRaw = (order.otp || '').toString().trim().toUpperCase();
+    const orderCodeRaw = (order.pickupCode || '').toString().trim().toUpperCase();
+
+    const matchesRaw = (inputRaw === orderCodeRaw && orderCodeRaw.length > 0) ||
+                       (inputRaw === orderOtpRaw && orderOtpRaw.length > 0);
+    const matchesClean = (inputClean.length >= 3 && (inputClean === orderOtpClean || inputClean === orderCodeClean));
+
+    if (!matchesRaw && !matchesClean) {
+      return res.status(400).json({
+        success: false,
+        message: `Invalid pickup OTP. The code provided does not match customer ${order.patient?.name || ''}'s pickup pass.`,
+      });
     }
 
     const updated = await prisma.order.update({
       where: { id: orderId },
       data: {
         status: order.orderType === 'pickup' ? 'picked_up' : 'delivered',
-        otp: null,
       },
+      include: { patient: true, pharmacy: true },
     });
 
     const { emitToUser, emitToOrder } = require('../services/socket.service');
@@ -357,13 +407,13 @@ const verifyPickupOtp = async (req, res, next) => {
     await notificationService.send(
       order.patientId,
       'Order Handover Completed',
-      'Your order verification succeeded. Medications handed over successfully. Thank you for using PharmaLink!',
+      `Your pickup verification at ${order.pharmacy?.pharmacyName || 'the pharmacy'} succeeded! Medications handed over. Thank you for using PharmaLink!`,
       'order'
     );
 
     res.json({
       success: true,
-      message: 'OTP validated successfully! Order completed.',
+      message: 'Patient pickup OTP verified successfully! Order marked as picked up.',
       data: updated,
     });
   } catch (err) { next(err); }

@@ -357,7 +357,7 @@ const sendToPharmacy = async (req, res, next) => {
 
     // Generate 4-digit OTP for verification / validation
     const otp = Math.floor(1000 + Math.random() * 9000).toString();
-    const pickupCode = orderType === 'pickup' ? `PK-${Math.floor(1000 + Math.random() * 9000)}` : null;
+    const pickupCode = orderType === 'pickup' ? `PK-${otp}` : null;
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h validity
 
     // Create the official Order
@@ -371,7 +371,7 @@ const sendToPharmacy = async (req, res, next) => {
         deliveryAddress: deliveryAddress || prescription.patient?.patientProfile?.address || 'Yaoundé, Cameroon',
         deliveryLat: deliveryLat ? parseFloat(deliveryLat) : (pharmacyProfile.lat || 3.8480),
         deliveryLng: deliveryLng ? parseFloat(deliveryLng) : (pharmacyProfile.lng || 11.5021),
-        pickupCode: pickupCode || `OTP-${otp}`,
+        pickupCode,
         otp,
         otpExpiresAt: expiresAt,
         items: {
