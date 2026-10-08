@@ -118,15 +118,15 @@ class _PaymentScreenState extends State<PaymentScreen> {
         elevation: 16,
         clipBehavior: Clip.antiAlias,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 20),
         child: Container(
           width: double.infinity,
           constraints: BoxConstraints(
-            maxWidth: 500,
-            maxHeight: MediaQuery.of(ctx).size.height * 0.85,
+            maxWidth: 540,
+            maxHeight: MediaQuery.of(ctx).size.height * 0.88,
           ),
           decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24)),
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(18),
           child: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -233,64 +233,24 @@ class _PaymentScreenState extends State<PaymentScreen> {
                   ..._patientPrescriptions.map((p) {
                     final mapP = Map<String, dynamic>.from(p as Map);
                     final doc = mapP['doctor'] as Map<String, dynamic>? ?? {};
-                    final docName = doc['name'] != null ? 'Dr. ${doc['name']}' : 'Certified Doctor';
+                    final rawDocName = doc['name']?.toString() ?? 'Certified Doctor';
+                    final docName = rawDocName.startsWith('Dr.') ? rawDocName : 'Dr. $rawDocName';
                     final dateStr = mapP['createdAt'] != null ? mapP['createdAt'].toString().split('T')[0] : 'Recent';
                     final isMatch = _checkPrescriptionMatchesOrder(mapP);
                     final rxItems = (mapP['items'] as List? ?? []).map((i) => i['medicationName']?.toString() ?? '').join(', ');
 
                     return Container(
-                      margin: const EdgeInsets.only(bottom: 10),
+                      margin: const EdgeInsets.only(bottom: 12),
                       decoration: BoxDecoration(
                         border: Border.all(
                           color: isMatch ? const Color(0xFF10B981) : const Color(0xFFFCA5A5),
                           width: isMatch ? 2 : 1,
                         ),
-                        borderRadius: BorderRadius.circular(14),
+                        borderRadius: BorderRadius.circular(16),
                         color: isMatch ? const Color(0xFFF0FDF4) : const Color(0xFFFFF1F2),
                       ),
-                      child: ListTile(
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-                        leading: Icon(
-                          isMatch ? Icons.verified_rounded : Icons.cancel_outlined,
-                          color: isMatch ? const Color(0xFF10B981) : const Color(0xFFDC2626),
-                          size: 26,
-                        ),
-                        title: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                'Rx from $docName',
-                                style: GoogleFonts.plusJakartaSans(fontSize: 13, fontWeight: FontWeight.w700),
-                              ),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: isMatch ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
-                                borderRadius: BorderRadius.circular(6),
-                              ),
-                              child: Text(
-                                isMatch ? '✓ Prescribed for $primaryMed' : '🚫 Mismatch: Unrelated Rx',
-                                style: TextStyle(
-                                  fontSize: 9.5,
-                                  fontWeight: FontWeight.w800,
-                                  color: isMatch ? const Color(0xFF15803D) : const Color(0xFFDC2626),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const SizedBox(height: 2),
-                            Text('Prescribed Items: ${rxItems.isNotEmpty ? rxItems : "None"} • Date: $dateStr',
-                                style: const TextStyle(fontSize: 11, color: AppColors.textGrey)),
-                          ],
-                        ),
-                        trailing: isMatch
-                            ? const Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Color(0xFF10B981))
-                            : const Icon(Icons.block, size: 16, color: Color(0xFFDC2626)),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(16),
                         onTap: () {
                           if (!isMatch) {
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -315,6 +275,88 @@ class _PaymentScreenState extends State<PaymentScreen> {
                             ),
                           );
                         },
+                        child: Padding(
+                          padding: const EdgeInsets.all(14),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                margin: const EdgeInsets.only(top: 2),
+                                padding: const EdgeInsets.all(6),
+                                decoration: BoxDecoration(
+                                  color: isMatch ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
+                                  shape: BoxShape.circle,
+                                ),
+                                child: Icon(
+                                  isMatch ? Icons.verified_rounded : Icons.cancel_outlined,
+                                  color: isMatch ? const Color(0xFF10B981) : const Color(0xFFDC2626),
+                                  size: 20,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Rx from $docName',
+                                      style: GoogleFonts.plusJakartaSans(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w700,
+                                        color: const Color(0xFF0F172A),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3.5),
+                                      decoration: BoxDecoration(
+                                        color: isMatch ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            isMatch ? Icons.check_circle_rounded : Icons.cancel_rounded,
+                                            size: 13,
+                                            color: isMatch ? const Color(0xFF15803D) : const Color(0xFFDC2626),
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Flexible(
+                                            child: Text(
+                                              isMatch ? 'Prescribed for $primaryMed' : 'Mismatch: Unrelated Rx',
+                                              style: TextStyle(
+                                                fontSize: 11,
+                                                fontWeight: FontWeight.w700,
+                                                color: isMatch ? const Color(0xFF15803D) : const Color(0xFFDC2626),
+                                              ),
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      'Prescribed Items: ${rxItems.isNotEmpty ? rxItems : "None"} • Date: $dateStr',
+                                      style: GoogleFonts.plusJakartaSans(fontSize: 11.5, color: AppColors.textGrey),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Padding(
+                                padding: const EdgeInsets.only(top: 6),
+                                child: Icon(
+                                  isMatch ? Icons.arrow_forward_ios_rounded : Icons.block,
+                                  size: 14,
+                                  color: isMatch ? const Color(0xFF10B981) : const Color(0xFFDC2626),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     );
                   }),
