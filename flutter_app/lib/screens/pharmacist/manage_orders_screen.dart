@@ -122,19 +122,26 @@ class _ManageOrdersScreenState extends State<ManageOrdersScreen> with SingleTick
 
   // 2. Open Driver Assignment Modal
   void _openAssignDriverModal(Map<String, dynamic> order) {
-    showModalBottomSheet(
+    showDialog(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => _AssignDriverModal(
-        order: order,
-        onDriverAssigned: () {
-          Navigator.pop(ctx);
-          _loadOrders();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Delivery driver successfully assigned! En route to pharmacy.'), backgroundColor: AppColors.primary),
-          );
-        },
+      barrierDismissible: true,
+      builder: (ctx) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        child: Container(
+          width: double.infinity,
+          constraints: const BoxConstraints(maxWidth: 540, maxHeight: 660),
+          child: _AssignDriverModal(
+            order: order,
+            onDriverAssigned: () {
+              Navigator.pop(ctx);
+              _loadOrders();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Delivery driver successfully assigned! En route to pharmacy.'), backgroundColor: AppColors.primary),
+              );
+            },
+          ),
+        ),
       ),
     );
   }
@@ -516,6 +523,30 @@ class _ManageOrdersScreenState extends State<ManageOrdersScreen> with SingleTick
                   ),
                 ],
 
+                if (status == 'delivered') ...[
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF0FDF4),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: const Color(0xFFBBF7D0)),
+                    ),
+                    child: Row(
+                      children: const [
+                        Icon(Icons.verified_rounded, size: 18, color: Color(0xFF10B981)),
+                        SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Payment Validated & Completed • Customer Signature Verified',
+                            style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: Color(0xFF15803D)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+
                 const SizedBox(height: 10),
                 const Divider(height: 1),
                 const SizedBox(height: 10),
@@ -712,16 +743,14 @@ class _AssignDriverModalState extends State<_AssignDriverModal> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: MediaQuery.of(context).size.height * 0.75,
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.circular(24),
       ),
       child: Column(
         children: [
-          Container(margin: const EdgeInsets.only(top: 10, bottom: 4), width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2))),
           Padding(
-            padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
             child: Row(
               children: [
                 Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: Colors.blue[50], borderRadius: BorderRadius.circular(10)), child: Icon(Icons.two_wheeler, color: Colors.blue[800], size: 24)),

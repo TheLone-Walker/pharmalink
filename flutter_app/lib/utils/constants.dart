@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 
 class AppColors {
   // Primary Palette
@@ -87,11 +88,18 @@ class AppConstants {
   // Production Railway URL
   static const String productionUrl = 'https://pharmalink-production-07a9.up.railway.app';
   
-  // Localhost development URL (use localhost for web, 10.0.2.2 for Android emulator)
-  static const String localUrl = 'http://localhost:3000';
+  // Local development URL (dynamically resolves PC IP from browser host on Web)
+  static const String customLocalIp = String.fromEnvironment('LOCAL_IP', defaultValue: '192.168.1.102');
+  static String get localUrl {
+    if (kIsWeb) {
+      final host = Uri.base.host.isNotEmpty ? Uri.base.host : 'localhost';
+      return 'http://$host:3000';
+    }
+    return 'http://$customLocalIp:3000';
+  }
 
   // Set to 'true' to connect to your live Railway backend.
-  // Set to 'false' to connect to your local Node.js server (http://localhost:3000).
+  // Set to 'false' to connect to your local Node.js server.
   // Can also be overridden at build time: --dart-define=USE_LOCAL=true
   static const bool useProductionBackend = !bool.fromEnvironment('USE_LOCAL', defaultValue: false);
 

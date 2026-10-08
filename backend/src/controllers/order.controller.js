@@ -30,7 +30,7 @@ const createOrder = async (req, res, next) => {
       orderItems.push({ medicationId: item.medicationId, quantity: item.quantity, unitPriceFcfa: med.priceFcfa });
     }
 
-    // 2. STRICT PRESCRIPTION ENFORCEMENT: Never sell prescription-only drugs without valid prescription
+    // 2. STRICT PRESCRIPTION ENFORCEMENT & MEDICATION MATCHING
     if (prescriptionRequiredMeds.length > 0) {
       if (!prescriptionId) {
         return res.status(400).json({
@@ -57,6 +57,29 @@ const createOrder = async (req, res, next) => {
           code: 'INVALID_PRESCRIPTION',
           message: `The selected prescription is invalid or has not been verified by a certified doctor. Please provide a valid prescription.`,
         });
+      }
+
+      // Validate that the prescription actually mentions the medications being ordered!
+      const rxItems = (prescription.items || []).map(i => (i.medicationName || '').toLowerCase().trim());
+      const rxNotes = (prescription.notes || '').toLowerCase().trim();
+
+      for (const reqMed of prescriptionRequiredMeds) {
+        const medNameLower = reqMed.toLowerCase().trim();
+        const baseName = medNameLower.split(' ')[0]; // e.g. "amoxicillin", "artemether"
+
+        const isMatched = rxItems.some(item => 
+          item.includes(medNameLower) || 
+          medNameLower.includes(item) || 
+          (baseName.length >= 4 && item.includes(baseName))
+        ) || rxNotes.includes(medNameLower) || (baseName.length >= 4 && rxNotes.includes(baseName));
+
+        if (!isMatched) {
+          return res.status(400).json({
+            success: false,
+            code: 'PRESCRIPTION_MED_MISMATCH',
+            message: `🚫 Prescription Mismatch: The selected prescription does not mention "${reqMed}". You cannot purchase this drug using an unrelated prescription where it is not prescribed.`,
+          });
+        }
       }
     }
 
@@ -247,17 +270,17 @@ const uploadSignature = async (req, res, next) => {
         data: { status: 'delivered', deliveredAt: new Date() },
       });
 
-      // 10% driver commission
+      // 10% driver commission recorded
       const commissionFcfa = Math.round(parseFloat(order.totalFcfa) * 0.1);
       if (order.delivery.driver) {
         await prisma.transaction.create({
           data: {
             userId: order.delivery.driver.userId,
             orderId: order.id,
-            type: 'delivery_fee',
+            type: 'earning',
             amountFcfa: commissionFcfa,
             method: 'cash',
-            status: 'completed',
+            status: 'success',
             reference: `DRV-${Date.now()}-${order.id.slice(0, 4)}`,
           },
         }).catch(() => {});
@@ -271,13 +294,34 @@ const uploadSignature = async (req, res, next) => {
       }
     }
 
+    // Mark Pharmacy Payment as validated / completed
+    await prisma.transaction.updateMany({
+      where: { orderId: order.id, type: 'payment' },
+      data: { status: 'success' },
+    }).catch(() => {});
+
+    // Notify Pharmacy Dashboard of validated payment & receipt
+    if (order.pharmacy?.userId) {
+      await notificationService.send(
+        order.pharmacy.userId,
+        'Payment Validated & Order Delivered! 💳',
+        `Order #${order.id.slice(0, 8).toUpperCase()} has been delivered with verified patient signature. Payment of FCFA ${parseFloat(order.totalFcfa).toLocaleString()} has been validated.`,
+        'order',
+        { orderId: order.id, totalFcfa: order.totalFcfa, signatureUrl: url }
+      ).catch(() => {});
+
+      const { emitToUser } = require('../services/socket.service');
+      emitToUser(order.pharmacy.userId, 'order:updated', { ...order, status: 'delivered', signatureUrl: url });
+      emitToUser(order.pharmacy.userId, 'order:payment_validated', { orderId: order.id, totalFcfa: order.totalFcfa });
+    }
+
     emitToOrder(order.id, 'order:status_change', { orderId: order.id, status: 'delivered', signatureUrl: url });
-    await notificationService.send(order.patientId, 'Order Delivered! 🎉', 'Your order has been signed and delivered successfully.', 'order').catch(() => {});
+    await notificationService.send(order.patientId, 'Order Delivered & Signed! 🎉', 'Your order delivery has been confirmed with your signature. Thank you for using PharmaLink!', 'order').catch(() => {});
 
     res.json({
       success: true,
       data: { signatureUrl: url, status: 'delivered' },
-      message: 'Delivery confirmed and signed successfully!',
+      message: 'Delivery confirmed and signed successfully! Payment validated on pharmacy dashboard.',
     });
   } catch (err) { next(err); }
 };
@@ -324,6 +368,8 @@ const getOrderReceipt = async (req, res, next) => {
     const receipt = {
       receiptNumber,
       orderId: order.id,
+      orderStatus: order.status,
+      pickupCode: order.pickupCode || (order.otp ? `OTP-${order.otp}` : `PK-${order.id.slice(0, 4).toUpperCase()}`),
       issuedAt: order.createdAt.toISOString(),
       orderType: order.orderType,
       patient: {
@@ -363,6 +409,101 @@ const getOrderReceipt = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+// PATCH /orders/:id/switch-to-pickup — Instant Switch to Counter Pickup Pass
+const switchToPickup = async (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const order = await prisma.order.findUnique({
+      where: { id },
+      include: {
+        pharmacy: true,
+        patient: { select: { id: true, name: true, phone: true } },
+        delivery: true,
+      },
+    });
+
+    if (!order) throw { status: 404, message: 'Order not found' };
+    if (order.status === 'delivered') {
+      throw { status: 400, message: 'Order has already been delivered.' };
+    }
+
+    const pickupCode = order.pickupCode || generatePickupCode();
+
+    // If a delivery was assigned but not yet delivered, cancel driver delivery
+    if (order.delivery && order.delivery.status !== 'delivered') {
+      await prisma.delivery.update({
+        where: { id: order.delivery.id },
+        data: { status: 'cancelled' },
+      }).catch(() => {});
+    }
+
+    const updatedOrder = await prisma.order.update({
+      where: { id },
+      data: {
+        orderType: 'pickup',
+        pickupCode,
+        driverProfileId: null,
+      },
+      include: {
+        pharmacy: true,
+        patient: { select: { id: true, name: true, phone: true } },
+      },
+    });
+
+    // Notify pharmacy and patient via WebSocket
+    const { emitToUser, emitToOrder } = require('../services/socket.service');
+    emitToOrder(order.id, 'order:status_change', {
+      orderId: order.id,
+      orderType: 'pickup',
+      pickupCode,
+      message: 'Order switched to Counter Pickup Pass',
+    });
+
+    if (order.pharmacy?.userId) {
+      emitToUser(order.pharmacy.userId, 'order:updated', updatedOrder);
+      await notificationService.send(
+        order.pharmacy.userId,
+        '🏪 Switched to Counter Pickup',
+        `Patient ${order.patient?.name || ''} switched Order #${order.id.slice(0, 8).toUpperCase()} to Instant In-Person Pickup. Pickup Pass: ${pickupCode}.`,
+        'order',
+        { orderId: order.id, pickupCode }
+      ).catch(() => {});
+    }
+
+    emitToUser(order.patientId, 'order:updated', updatedOrder);
+
+    await notificationService.send(
+      order.patientId,
+      '🏪 Counter Pickup Pass Activated!',
+      `Your order is ready for instant counter collection with Pickup Pass: ${pickupCode}. Present your QR code at the counter.`,
+      'order',
+      { orderId: order.id, pickupCode }
+    ).catch(() => {});
+
+    res.json({
+      success: true,
+      data: {
+        order: updatedOrder,
+        pickupCode,
+      },
+      message: 'Switched to Instant Counter Pickup Pass! Present your QR pass at the pharmacy.',
+    });
+  } catch (err) { next(err); }
+};
+
+// POST /orders/:id/auto-assign — Auto-dispatch to nearest online courier
+const autoAssignDriver = async (req, res, next) => {
+  try {
+    const { autoAssignNearestDriver } = require('../services/dispatch.service');
+    const result = await autoAssignNearestDriver(req.params.id);
+    res.json({
+      success: true,
+      data: result,
+      message: result.assigned ? 'Nearest online driver dispatched!' : (result.reason || 'No drivers available'),
+    });
+  } catch (err) { next(err); }
+};
+
 module.exports = {
   createOrder,
   getMyOrders,
@@ -373,4 +514,7 @@ module.exports = {
   generateOrderOtp,
   verifyOrderOtp,
   uploadSignature,
+  switchToPickup,
+  autoAssignDriver,
 };
+

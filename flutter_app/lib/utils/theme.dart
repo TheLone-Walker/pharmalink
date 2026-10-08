@@ -8,7 +8,8 @@ class AppTheme {
         colorScheme: ColorScheme.fromSeed(seedColor: AppColors.primary),
         primaryColor: AppColors.primary,
         scaffoldBackgroundColor: AppColors.primary,
-        textTheme: GoogleFonts.poppinsTextTheme(),
+        fontFamily: 'Plus Jakarta Sans',
+        fontFamilyFallback: const ['Plus Jakarta Sans', 'Poppins', 'Roboto', 'Arial', 'sans-serif'],
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
             backgroundColor: AppColors.primary,

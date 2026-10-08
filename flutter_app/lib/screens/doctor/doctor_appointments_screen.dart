@@ -132,128 +132,135 @@ class _DoctorAppointmentsScreenState extends State<DoctorAppointmentsScreen> {
     final timeSlots = ['08:30 AM', '09:00 AM', '10:00 AM', '11:00 AM', '02:00 PM', '03:00 PM', '04:00 PM', '05:00 PM'];
     bool rescheduling = false;
 
-    await showModalBottomSheet(
+    await showDialog(
       context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      barrierDismissible: true,
       builder: (ctx) => StatefulBuilder(
-        builder: (context, setModalState) => Padding(
-          padding: EdgeInsets.fromLTRB(20, 20, 20, MediaQuery.of(context).viewInsets.bottom + 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        builder: (context, setModalState) => Dialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+          child: Container(
+            width: double.infinity,
+            constraints: const BoxConstraints(maxWidth: 500),
+            padding: const EdgeInsets.all(20),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(children: const [
-                    Icon(Icons.edit_calendar_rounded, color: AppColors.primary, size: 22),
-                    SizedBox(width: 8),
-                    Text('Reschedule Appointment', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  ]),
-                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(children: const [
+                        Icon(Icons.edit_calendar_rounded, color: AppColors.primary, size: 22),
+                        SizedBox(width: 8),
+                        Text('Reschedule Appointment', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      ]),
+                      IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Patient: ${apt['patient']?['name'] ?? 'Patient'}',
+                    style: const TextStyle(fontSize: 13, color: AppColors.textGrey),
+                  ),
+                  const Divider(height: 20),
+                  const Text('Select New Date', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                  const SizedBox(height: 8),
+                  GestureDetector(
+                    onTap: () async {
+                      final picked = await showDatePicker(
+                        context: context,
+                        initialDate: DateTime.now().add(const Duration(days: 1)),
+                        firstDate: DateTime.now(),
+                        lastDate: DateTime.now().add(const Duration(days: 60)),
+                      );
+                      if (picked != null) {
+                        setModalState(() => newDate = picked);
+                      }
+                    },
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      decoration: BoxDecoration(
+                        color: AppColors.fieldBg,
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: newDate != null ? AppColors.primary : const Color(0xFFEEEEEE)),
+                      ),
+                      child: Row(children: [
+                        const Icon(Icons.calendar_today_outlined, size: 18, color: AppColors.primary),
+                        const SizedBox(width: 10),
+                        Text(
+                          newDate == null ? 'Tap to choose a new date' : '${newDate!.day}/${newDate!.month}/${newDate!.year}',
+                          style: TextStyle(fontSize: 13, color: newDate == null ? Colors.black38 : AppColors.textDark, fontWeight: FontWeight.w500),
+                        ),
+                      ]),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  const Text('Select New Time Slot', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: timeSlots.map((t) => GestureDetector(
+                      onTap: () => setModalState(() => newTime = t),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                        decoration: BoxDecoration(
+                          color: newTime == t ? AppColors.primary : Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: newTime == t ? AppColors.primary : const Color(0xFFEEEEEE)),
+                        ),
+                        child: Text(
+                          t,
+                          style: TextStyle(fontSize: 12, color: newTime == t ? Colors.white : AppColors.textDark, fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                    )).toList(),
+                  ),
+                  const SizedBox(height: 24),
+                  PharmaButton(
+                    label: 'Confirm Reschedule',
+                    isLoading: rescheduling,
+                    onPressed: () async {
+                      if (newDate == null) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Please select a new date first'), backgroundColor: AppColors.error),
+                        );
+                        return;
+                      }
+                      setModalState(() => rescheduling = true);
+                      try {
+                        final parts = newTime.replaceAll(' AM', '').replaceAll(' PM', '').split(':');
+                        int hour = int.parse(parts[0]);
+                        final isPm = newTime.contains('PM');
+                        if (isPm && hour != 12) hour += 12;
+                        if (!isPm && hour == 12) hour = 0;
+
+                        final fullDate = DateTime(newDate!.year, newDate!.month, newDate!.day, hour, 0);
+
+                        await _api.patch('/appointments/${apt['id']}/reschedule', data: {
+                          'appointmentDate': fullDate.toIso8601String(),
+                        });
+
+                        if (!mounted) return;
+                        Navigator.pop(ctx);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Appointment rescheduled! Patient notified.'), backgroundColor: AppColors.primary),
+                        );
+                        _loadData();
+                      } catch (e) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Reschedule failed: ${e.toString().substring(0, 60)}'), backgroundColor: AppColors.error),
+                        );
+                      } finally {
+                        setModalState(() => rescheduling = false);
+                      }
+                    },
+                  ),
                 ],
               ),
-              const SizedBox(height: 4),
-              Text(
-                'Patient: ${apt['patient']?['name'] ?? 'Patient'}',
-                style: const TextStyle(fontSize: 13, color: AppColors.textGrey),
-              ),
-              const Divider(height: 20),
-              const Text('Select New Date', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-              const SizedBox(height: 8),
-              GestureDetector(
-                onTap: () async {
-                  final picked = await showDatePicker(
-                    context: context,
-                    initialDate: DateTime.now().add(const Duration(days: 1)),
-                    firstDate: DateTime.now(),
-                    lastDate: DateTime.now().add(const Duration(days: 60)),
-                  );
-                  if (picked != null) {
-                    setModalState(() => newDate = picked);
-                  }
-                },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: AppColors.fieldBg,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: newDate != null ? AppColors.primary : const Color(0xFFEEEEEE)),
-                  ),
-                  child: Row(children: [
-                    const Icon(Icons.calendar_today_outlined, size: 18, color: AppColors.primary),
-                    const SizedBox(width: 10),
-                    Text(
-                      newDate == null ? 'Tap to choose a new date' : '${newDate!.day}/${newDate!.month}/${newDate!.year}',
-                      style: TextStyle(fontSize: 13, color: newDate == null ? Colors.black38 : AppColors.textDark, fontWeight: FontWeight.w500),
-                    ),
-                  ]),
-                ),
-              ),
-              const SizedBox(height: 14),
-              const Text('Select New Time Slot', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: timeSlots.map((t) => GestureDetector(
-                  onTap: () => setModalState(() => newTime = t),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-                    decoration: BoxDecoration(
-                      color: newTime == t ? AppColors.primary : Colors.white,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: newTime == t ? AppColors.primary : const Color(0xFFEEEEEE)),
-                    ),
-                    child: Text(
-                      t,
-                      style: TextStyle(fontSize: 12, color: newTime == t ? Colors.white : AppColors.textDark, fontWeight: FontWeight.w500),
-                    ),
-                  ),
-                )).toList(),
-              ),
-              const SizedBox(height: 24),
-              PharmaButton(
-                label: 'Confirm Reschedule',
-                isLoading: rescheduling,
-                onPressed: () async {
-                  if (newDate == null) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Please select a new date first'), backgroundColor: AppColors.error),
-                    );
-                    return;
-                  }
-                  setModalState(() => rescheduling = true);
-                  try {
-                    final parts = newTime.replaceAll(' AM', '').replaceAll(' PM', '').split(':');
-                    int hour = int.parse(parts[0]);
-                    final isPm = newTime.contains('PM');
-                    if (isPm && hour != 12) hour += 12;
-                    if (!isPm && hour == 12) hour = 0;
-
-                    final fullDate = DateTime(newDate!.year, newDate!.month, newDate!.day, hour, 0);
-
-                    await _api.patch('/appointments/${apt['id']}/reschedule', data: {
-                      'appointmentDate': fullDate.toIso8601String(),
-                    });
-
-                    if (!mounted) return;
-                    Navigator.pop(ctx);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Appointment rescheduled! Patient notified.'), backgroundColor: AppColors.primary),
-                    );
-                    _loadData();
-                  } catch (e) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Reschedule failed: ${e.toString().substring(0, 60)}'), backgroundColor: AppColors.error),
-                    );
-                  } finally {
-                    setModalState(() => rescheduling = false);
-                  }
-                },
-              ),
-            ],
+            ),
           ),
         ),
       ),
@@ -647,40 +654,54 @@ class _DoctorAppointmentsScreenState extends State<DoctorAppointmentsScreen> {
               ),
               TextButton(
                 onPressed: () {
-                  showModalBottomSheet(
+                  showDialog(
                     context: context,
-                    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-                    builder: (ctx) => Padding(
-                      padding: const EdgeInsets.all(20),
-                      child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                          const Text('My Blocked Personal Times', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                          IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
-                        ]),
-                        const Divider(),
-                        ..._blockedTimes.map((b) {
-                          final start = DateTime.tryParse(b['startDate'] ?? '');
-                          final end = DateTime.tryParse(b['endDate'] ?? '');
-                          return ListTile(
-                            dense: true,
-                            leading: const Icon(Icons.block, color: Colors.orange),
-                            title: Text(b['reason'] ?? 'Personal Time', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-                            subtitle: Text(
-                              start != null && end != null
-                                ? '${start.day}/${start.month} ${start.hour}:${start.minute.toString().padLeft(2, '0')} - ${end.hour}:${end.minute.toString().padLeft(2, '0')}'
-                                : '',
-                              style: const TextStyle(fontSize: 11),
+                    barrierDismissible: true,
+                    builder: (ctx) => Dialog(
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+                      child: Container(
+                        width: double.infinity,
+                        constraints: const BoxConstraints(maxWidth: 480, maxHeight: 600),
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                              const Text('My Blocked Personal Times', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                              IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
+                            ]),
+                            const Divider(),
+                            Expanded(
+                              child: ListView(
+                                children: _blockedTimes.map((b) {
+                                  final start = DateTime.tryParse(b['startDate'] ?? '');
+                                  final end = DateTime.tryParse(b['endDate'] ?? '');
+                                  return ListTile(
+                                    dense: true,
+                                    leading: const Icon(Icons.block, color: Colors.orange),
+                                    title: Text(b['reason'] ?? 'Personal Time', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                                    subtitle: Text(
+                                      start != null && end != null
+                                        ? '${start.day}/${start.month} ${start.hour}:${start.minute.toString().padLeft(2, '0')} - ${end.hour}:${end.minute.toString().padLeft(2, '0')}'
+                                        : '',
+                                      style: const TextStyle(fontSize: 11),
+                                    ),
+                                    trailing: IconButton(
+                                      icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                                      onPressed: () {
+                                        Navigator.pop(ctx);
+                                        _unblockTime(b['id']);
+                                      },
+                                    ),
+                                  );
+                                }).toList(),
+                              ),
                             ),
-                            trailing: IconButton(
-                              icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
-                              onPressed: () {
-                                Navigator.pop(ctx);
-                                _unblockTime(b['id']);
-                              },
-                            ),
-                          );
-                        }),
-                      ]),
+                          ],
+                        ),
+                      ),
                     ),
                   );
                 },

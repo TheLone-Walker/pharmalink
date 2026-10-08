@@ -333,6 +333,7 @@ class SocketService {
   void onOrderNew(Function(dynamic) callback) => addListener('order:new', callback);
   void onOrderUpdated(Function(dynamic) callback) => addListener('order:updated', callback);
   void onOrderStatus(Function(dynamic) callback) => addListener('order:status_change', callback);
+  void onStatusChange(Function(dynamic) callback) => addListener('order:status_change', callback);
   void onAppointmentNew(Function(dynamic) callback) => addListener('appointment:new', callback);
   void onAppointmentUpdated(Function(dynamic) callback) => addListener('appointment:updated', callback);
   void onPrescriptionNew(Function(dynamic) callback) => addListener('prescription:new', callback);

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -75,41 +76,49 @@ class _RemindersScreenState extends State<RemindersScreen> {
 
   /// Load local cache immediately, then sync with backend in background
   Future<void> _loadReminders() async {
-    setState(() => _loading = true);
-
-    // 1. Instantly load from local storage
+    // 1. Instantly load from local storage first
     try {
       final prefs = await SharedPreferences.getInstance();
       final localData = prefs.getString(_storageKey);
-      if (localData != null) {
+      if (localData != null && localData.isNotEmpty) {
         final decoded = jsonDecode(localData) as List;
-        setState(() {
-          _reminders = decoded.map((e) => Map<String, dynamic>.from(e as Map)).toList();
-        });
-      }
-    } catch (_) {}
-
-    // 2. Fetch from cloud API and merge
-    try {
-      final res = await _api.get('/reminders');
-      final cloudList = (res.data['data'] as List? ?? [])
-          .map((e) => Map<String, dynamic>.from(e as Map))
-          .toList();
-
-      if (cloudList.isNotEmpty) {
-        // Merge cloud with local
-        final Map<String, Map<String, dynamic>> merged = {};
-        for (final r in _reminders) {
-          merged[r['id'].toString()] = r;
+        if (mounted) {
+          setState(() {
+            _reminders = decoded.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+            _loading = false;
+          });
         }
-        for (final c in cloudList) {
-          merged[c['id'].toString()] = c;
-        }
-        _reminders = merged.values.toList();
-        await _saveToLocalStorage();
+      } else {
+        if (mounted) setState(() => _loading = _reminders.isEmpty);
       }
     } catch (_) {
-      // Offline or network error - local storage takes over seamlessly
+      if (mounted) setState(() => _loading = false);
+    }
+
+    // 2. Fetch from cloud API and merge with short timeout
+    try {
+      final res = await _api.get('/reminders');
+      if (res.data != null && res.data['data'] is List) {
+        final cloudList = (res.data['data'] as List)
+            .map((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
+
+        if (cloudList.isNotEmpty && mounted) {
+          final Map<String, Map<String, dynamic>> merged = {};
+          for (final r in _reminders) {
+            merged[r['id'].toString()] = r;
+          }
+          for (final c in cloudList) {
+            merged[c['id'].toString()] = c;
+          }
+          setState(() {
+            _reminders = merged.values.toList();
+          });
+          await _saveToLocalStorage();
+        }
+      }
+    } catch (_) {
+      // Offline or local storage fallback
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -206,424 +215,111 @@ class _RemindersScreenState extends State<RemindersScreen> {
     }
   }
 
-  void _showAddOrEditSheet({Map<String, dynamic>? existing}) {
-    final isEdit = existing != null;
-    final medCtrl = TextEditingController(text: existing?['medicationName'] ?? '');
-    final dosageCtrl = TextEditingController(text: existing?['dosage'] ?? '');
-    final freqCtrl = TextEditingController(text: existing?['frequency'] ?? '');
-    final notesCtrl = TextEditingController(text: existing?['notes'] ?? '');
-    String reminderTimeStr = existing?['reminderTime'] ?? '08:00 AM';
-    String selectedSound = existing?['sound'] ?? 'gentle_chime';
-    bool isSubmitting = false;
+  void _openAddOrEditModal({Map<String, dynamic>? existing}) async {
+    HapticFeedback.lightImpact();
+    final screenSize = MediaQuery.of(context).size;
+    final isDesktop = screenSize.width > 700;
+    final modalWidth = isDesktop ? math.min(screenSize.width * 0.9, 580.0) : math.min(screenSize.width * 0.95, 520.0);
+    final modalHeight = math.min(screenSize.height * 0.88, 760.0);
 
-    final quickFrequencies = [
-      'Once Daily (Morning)',
-      'Twice Daily (Morning & Night)',
-      '3 Times Daily (Every 8h)',
-      'Every 6 Hours (4x Daily)',
-      'Before Bedtime',
-      'As Needed (PRN)',
-    ];
-
-    showModalBottomSheet(
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setModal) => Container(
-          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.9),
-          decoration: const BoxDecoration(
+      barrierDismissible: true,
+      useRootNavigator: true,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 24,
+        clipBehavior: Clip.antiAlias,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        child: SizedBox(
+          width: modalWidth,
+          height: modalHeight,
+          child: Material(
             color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(ctx).viewInsets.bottom + 20,
-            left: 20,
-            right: 20,
-            top: 16,
-          ),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 40,
-                    height: 4,
-                    decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(color: AppColors.lightGreen, borderRadius: BorderRadius.circular(10)),
-                      child: const Icon(Icons.alarm_add, color: AppColors.primary, size: 22),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            isEdit ? 'Edit Medication Reminder' : 'Add Medication Reminder',
-                            style: GoogleFonts.plusJakartaSans(fontSize: 16, fontWeight: FontWeight.w700),
-                          ),
-                          Text(
-                            'Personalized alerts & sound notifications',
-                            style: GoogleFonts.plusJakartaSans(fontSize: 11.5, color: AppColors.textGrey),
-                          ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close, size: 20),
-                      onPressed: () => Navigator.pop(ctx),
-                    ),
-                  ],
-                ),
-                const Divider(height: 20),
-
-                // Prescription Quick Suggestions (if any)
-                if (!isEdit && _prescriptionSuggestions.isNotEmpty) ...[
-                  Row(
-                    children: [
-                      const Icon(Icons.auto_awesome, color: AppColors.primary, size: 14),
-                      const SizedBox(width: 6),
-                      Text(
-                        'Suggestions from Doctor Prescriptions:',
-                        style: GoogleFonts.plusJakartaSans(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.primary),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: _prescriptionSuggestions.map((s) {
-                        return Padding(
-                          padding: const EdgeInsets.only(right: 8),
-                          child: ActionChip(
-                            avatar: const Icon(Icons.medication, size: 14, color: AppColors.primary),
-                            label: Text('${s['medicationName']} (${s['dosage']})', style: const TextStyle(fontSize: 11)),
-                            backgroundColor: const Color(0xFFE8F5E9),
-                            onPressed: () {
-                              setModal(() {
-                                medCtrl.text = s['medicationName'] ?? '';
-                                dosageCtrl.text = s['dosage'] ?? '';
-                                freqCtrl.text = s['frequency'] ?? '';
-                                if (s['reminderTime'] != null && (s['reminderTime'] as String).isNotEmpty) {
-                                  reminderTimeStr = s['reminderTime'];
-                                }
-                              });
-                            },
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-
-                // 1. Medication Info
-                PharmaField(
-                  label: 'Medication Name *',
-                  hint: 'e.g. Amoxicillin 500mg, Paracetamol, Coartem',
-                  prefixIcon: Icons.medication_outlined,
-                  controller: medCtrl,
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: PharmaField(
-                        label: 'Dosage',
-                        hint: 'e.g. 1 tablet / 10ml',
-                        prefixIcon: Icons.colorize_outlined,
-                        controller: dosageCtrl,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: PharmaField(
-                        label: 'Frequency',
-                        hint: 'e.g. 3 times daily',
-                        prefixIcon: Icons.repeat,
-                        controller: freqCtrl,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                const Text('Quick Frequencies:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textGrey)),
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: quickFrequencies.map((f) {
-                    return ActionChip(
-                      label: Text(f, style: const TextStyle(fontSize: 10.5)),
-                      backgroundColor: AppColors.lightGreen.withValues(alpha: 0.5),
-                      labelStyle: const TextStyle(color: AppColors.primary, fontWeight: FontWeight.w600),
-                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
-                      onPressed: () {
-                        setModal(() {
-                          freqCtrl.text = f;
-                          if (f.contains('3 Times')) reminderTimeStr = '08:00 AM, 01:00 PM, 08:00 PM';
-                          if (f.contains('Twice')) reminderTimeStr = '08:00 AM, 08:00 PM';
-                          if (f.contains('Once')) reminderTimeStr = '08:00 AM';
-                          if (f.contains('Bedtime')) reminderTimeStr = '09:00 PM';
-                          if (f.contains('6 Hours')) reminderTimeStr = '08:00 AM, 12:00 PM, 04:00 PM, 08:00 PM';
-                        });
-                      },
-                    );
-                  }).toList(),
-                ),
-                const SizedBox(height: 16),
-
-                // 2. Schedule Times
-                const Text('Scheduled Alarm Time *', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                        decoration: BoxDecoration(
-                          color: AppColors.fieldBg,
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: const Color(0xFFE5E7EB)),
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.access_time, color: AppColors.primary, size: 18),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                reminderTimeStr,
-                                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.primary),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      ),
-                      icon: const Icon(Icons.edit, size: 14, color: Colors.white),
-                      label: const Text('Pick Time', style: TextStyle(color: Colors.white, fontSize: 12)),
-                      onPressed: () async {
-                        final t = await showTimePicker(
-                          context: ctx,
-                          initialTime: TimeOfDay.now(),
-                        );
-                        if (t != null && ctx.mounted) {
-                          final formatted = t.format(ctx);
-                          setModal(() => reminderTimeStr = formatted);
-                        }
-                      },
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 18),
-
-                // 3. Personalized Notification Sound Theme
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Personalized Notification Sound', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
-                    TextButton.icon(
-                      icon: const Icon(Icons.volume_up_rounded, size: 14, color: AppColors.primary),
-                      label: const Text('Test Sound', style: TextStyle(fontSize: 11, color: AppColors.primary, fontWeight: FontWeight.w700)),
-                      onPressed: () async {
-                        final chosen = soundThemes.firstWhere((s) => s['id'] == selectedSound, orElse: () => soundThemes[0]);
-                        HapticFeedback.mediumImpact();
-                        try {
-                          await NotificationService().show(
-                            id: 777,
-                            title: '💊 Pill Reminder (${chosen['title']})',
-                            body: 'Time to take ${medCtrl.text.trim().isNotEmpty ? medCtrl.text.trim() : "your medication"} (${dosageCtrl.text.trim().isNotEmpty ? dosageCtrl.text.trim() : "1 dose"})',
-                            payload: 'reminder_test',
-                          );
-                        } catch (_) {}
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(
-                              content: Text('🔔 Sound theme "${chosen['title']}" triggered!'),
-                              backgroundColor: AppColors.primary,
-                              duration: const Duration(seconds: 2),
-                            ),
-                          );
-                        }
-                      },
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: soundThemes.map((s) {
-                    final isSelected = selectedSound == s['id'];
-                    final color = s['color'] as Color;
-                    return InkWell(
-                      borderRadius: BorderRadius.circular(10),
-                      onTap: () {
-                        HapticFeedback.selectionClick();
-                        setModal(() => selectedSound = s['id']);
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: isSelected ? color.withValues(alpha: 0.12) : const Color(0xFFF9FAFB),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: isSelected ? color : const Color(0xFFE5E7EB),
-                            width: isSelected ? 1.5 : 1.0,
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(s['icon'] as IconData, size: 16, color: isSelected ? color : Colors.grey[600]),
-                            const SizedBox(width: 6),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  s['title'] as String,
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: isSelected ? FontWeight.w700 : FontWeight.w500,
-                                    color: isSelected ? color : Colors.black87,
-                                  ),
-                                ),
-                                Text(
-                                  s['subtitle'] as String,
-                                  style: TextStyle(fontSize: 9, color: Colors.grey[600]),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-                const SizedBox(height: 14),
-
-                PharmaField(
-                  label: 'Notes (Optional)',
-                  hint: 'e.g. Take with a glass of water after food',
-                  prefixIcon: Icons.notes_rounded,
-                  controller: notesCtrl,
-                ),
-                const SizedBox(height: 20),
-
-                // Submit Button
-                PharmaButton(
-                  label: isEdit ? 'Update Reminder' : 'Save Reminder',
-                  icon: Icons.check,
-                  isLoading: isSubmitting,
-                  onPressed: () async {
-                    final medName = medCtrl.text.trim();
-                    if (medName.isEmpty) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Please enter medication name')),
-                      );
-                      return;
-                    }
-
-                    setModal(() => isSubmitting = true);
-
-                    final String reminderId = isEdit ? existing['id'].toString() : 'rem_${DateTime.now().millisecondsSinceEpoch}';
-                    final newReminderData = {
-                      'id': reminderId,
-                      'medicationName': medName,
-                      'dosage': dosageCtrl.text.trim().isNotEmpty ? dosageCtrl.text.trim() : '1 dose',
-                      'frequency': freqCtrl.text.trim().isNotEmpty ? freqCtrl.text.trim() : 'Daily',
-                      'reminderTime': reminderTimeStr,
-                      'sound': selectedSound,
-                      'notes': notesCtrl.text.trim(),
-                      'isActive': isEdit ? (existing['isActive'] ?? true) : true,
-                      'createdAt': isEdit ? (existing['createdAt'] ?? DateTime.now().toIso8601String()) : DateTime.now().toIso8601String(),
-                    };
-
-                    // 1. Guaranteed Local Persistence Update
-                    HapticFeedback.heavyImpact();
-                    setState(() {
-                      if (isEdit) {
-                        final idx = _reminders.indexWhere((r) => r['id'].toString() == reminderId);
-                        if (idx != -1) {
-                          _reminders[idx] = newReminderData;
-                        } else {
-                          _reminders.insert(0, newReminderData);
-                        }
-                      } else {
-                        _reminders.insert(0, newReminderData);
-                      }
-                    });
-                    await _saveToLocalStorage();
-
-                    // 2. Safe local notification trigger
-                    try {
-                      await NotificationService().show(
-                        id: reminderId.hashCode,
-                        title: 'Medication Reminder 💊',
-                        body: 'Scheduled alarm for $medName at $reminderTimeStr',
-                        payload: 'reminder:$reminderId',
-                      );
-                    } catch (notifErr) {
-                      debugPrint('Local notification notice: $notifErr');
-                    }
-
-                    // 3. Close Modal Immediately
-                    if (ctx.mounted) {
-                      Navigator.pop(ctx);
-                    }
-                    if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(isEdit ? '✅ Reminder updated successfully!' : '✅ Reminder for $medName saved!'),
-                          backgroundColor: AppColors.primary,
-                        ),
-                      );
-                    }
-
-                    // 4. Background Cloud Sync (Non-blocking)
-                    try {
-                      if (isEdit) {
-                        await _api.patch('/reminders/$reminderId', data: newReminderData);
-                      } else {
-                        final res = await _api.post('/reminders', data: newReminderData);
-                        if (res.data?['data']?['id'] != null) {
-                          final serverId = res.data['data']['id'].toString();
-                          setState(() {
-                            final idx = _reminders.indexWhere((r) => r['id'].toString() == reminderId);
-                            if (idx != -1) {
-                              _reminders[idx]['id'] = serverId;
-                            }
-                          });
-                          await _saveToLocalStorage();
-                        }
-                      }
-                    } catch (cloudErr) {
-                      debugPrint('Cloud sync in background (safe): $cloudErr');
-                    }
-                  },
-                ),
-              ],
+            child: AddEditReminderContent(
+              existing: existing,
+              prescriptionSuggestions: _prescriptionSuggestions,
+              onClose: () => Navigator.of(ctx, rootNavigator: true).pop(),
+              onSave: (data) => Navigator.of(ctx, rootNavigator: true).pop(data),
             ),
           ),
         ),
       ),
     );
+
+    if (result != null && mounted) {
+      final isEdit = existing != null;
+      final reminderId = result['id'].toString();
+      final medName = result['medicationName'] ?? 'Medication';
+
+      setState(() {
+        if (isEdit) {
+          final idx = _reminders.indexWhere((r) => r['id'].toString() == reminderId);
+          if (idx != -1) {
+            _reminders[idx] = result;
+          } else {
+            _reminders.insert(0, result);
+          }
+        } else {
+          _reminders.insert(0, result);
+        }
+      });
+      _saveToLocalStorage();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.alarm_on_rounded, color: Colors.white, size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  isEdit ? '✅ Reminder updated for $medName' : '✅ Alarm scheduled for $medName at ${result['reminderTime']}!',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: const Color(0xFF0F172A),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+
+      // Safe local notification trigger (non-blocking)
+      NotificationService().show(
+        id: reminderId.hashCode,
+        title: 'Medication Reminder 💊',
+        body: 'Scheduled alarm for $medName at ${result['reminderTime']}',
+        payload: 'reminder:$reminderId',
+      ).catchError((_) {});
+
+      // Background Cloud Sync (Non-blocking)
+      Future.microtask(() async {
+        try {
+          if (isEdit) {
+            await _api.patch('/reminders/$reminderId', data: result);
+          } else {
+            final res = await _api.post('/reminders', data: result);
+            if (res.data?['data']?['id'] != null && mounted) {
+              final serverId = res.data['data']['id'].toString();
+              setState(() {
+                final idx = _reminders.indexWhere((r) => r['id'].toString() == reminderId);
+                if (idx != -1) {
+                  _reminders[idx]['id'] = serverId;
+                }
+              });
+              _saveToLocalStorage();
+            }
+          }
+        } catch (cloudErr) {
+          debugPrint('Cloud reminder sync in background: $cloudErr');
+        }
+      });
+    }
   }
 
   @override
@@ -643,7 +339,7 @@ class _RemindersScreenState extends State<RemindersScreen> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: AppColors.primary,
-        onPressed: () => _showAddOrEditSheet(),
+        onPressed: () => _openAddOrEditModal(),
         icon: const Icon(Icons.add_alarm, color: Colors.white),
         label: Text('Add Reminder', style: GoogleFonts.plusJakartaSans(color: Colors.white, fontWeight: FontWeight.w700)),
       ),
@@ -742,9 +438,9 @@ class _RemindersScreenState extends State<RemindersScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               ),
-              icon: const Icon(Icons.add, size: 18),
+              icon: const Icon(Icons.add_alarm_rounded, size: 18),
               label: const Text('Add Medication Reminder'),
-              onPressed: () => _showAddOrEditSheet(),
+              onPressed: () => _openAddOrEditModal(),
             ),
           ],
         ),
@@ -899,7 +595,7 @@ class _RemindersScreenState extends State<RemindersScreen> {
               TextButton.icon(
                 icon: const Icon(Icons.edit_outlined, size: 14, color: AppColors.primary),
                 label: const Text('Edit', style: TextStyle(fontSize: 11, color: AppColors.primary, fontWeight: FontWeight.w600)),
-                onPressed: () => _showAddOrEditSheet(existing: r),
+                onPressed: () => _openAddOrEditModal(existing: r),
                 style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
               ),
               const SizedBox(width: 4),
@@ -910,6 +606,460 @@ class _RemindersScreenState extends State<RemindersScreen> {
                 style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
               ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PERFECT ADAPTIVE MODAL CONTENT: ADD / EDIT MEDICATION ALARM REMINDER
+// ─────────────────────────────────────────────────────────────────────────────
+class AddEditReminderContent extends StatefulWidget {
+  final Map<String, dynamic>? existing;
+  final List<Map<String, dynamic>> prescriptionSuggestions;
+  final VoidCallback onClose;
+  final ValueChanged<Map<String, dynamic>> onSave;
+
+  const AddEditReminderContent({
+    super.key,
+    this.existing,
+    this.prescriptionSuggestions = const [],
+    required this.onClose,
+    required this.onSave,
+  });
+
+  @override
+  State<AddEditReminderContent> createState() => _AddEditReminderContentState();
+}
+
+class _AddEditReminderContentState extends State<AddEditReminderContent> {
+  late final TextEditingController _medCtrl;
+  late final TextEditingController _dosageCtrl;
+  late final TextEditingController _freqCtrl;
+  late final TextEditingController _notesCtrl;
+  late String _reminderTimeStr;
+  late String _selectedSound;
+
+  final List<String> _quickFrequencies = [
+    'Once Daily (Morning)',
+    'Twice Daily (Morning & Night)',
+    '3 Times Daily (Every 8h)',
+    'Every 6 Hours (4x Daily)',
+    'Before Bedtime',
+    'As Needed (PRN)',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _medCtrl = TextEditingController(text: widget.existing?['medicationName'] ?? '');
+    _dosageCtrl = TextEditingController(text: widget.existing?['dosage'] ?? '');
+    _freqCtrl = TextEditingController(text: widget.existing?['frequency'] ?? '');
+    _notesCtrl = TextEditingController(text: widget.existing?['notes'] ?? '');
+    _reminderTimeStr = widget.existing?['reminderTime'] ?? '08:00 AM';
+    _selectedSound = widget.existing?['sound'] ?? 'gentle_chime';
+  }
+
+  @override
+  void dispose() {
+    _medCtrl.dispose();
+    _dosageCtrl.dispose();
+    _freqCtrl.dispose();
+    _notesCtrl.dispose();
+    super.dispose();
+  }
+
+  void _handleSave() {
+    final medName = _medCtrl.text.trim();
+    if (medName.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter the medication name'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+      return;
+    }
+
+    final String reminderId = widget.existing != null
+        ? widget.existing!['id'].toString()
+        : 'rem_${DateTime.now().millisecondsSinceEpoch}';
+
+    final result = {
+      'id': reminderId,
+      'medicationName': medName,
+      'dosage': _dosageCtrl.text.trim().isNotEmpty ? _dosageCtrl.text.trim() : '1 dose',
+      'frequency': _freqCtrl.text.trim().isNotEmpty ? _freqCtrl.text.trim() : 'Daily',
+      'reminderTime': _reminderTimeStr,
+      'sound': _selectedSound,
+      'notes': _notesCtrl.text.trim(),
+      'isActive': widget.existing != null ? (widget.existing!['isActive'] ?? true) : true,
+      'createdAt': widget.existing != null
+          ? (widget.existing!['createdAt'] ?? DateTime.now().toIso8601String())
+          : DateTime.now().toIso8601String(),
+    };
+
+    widget.onSave(result);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isEdit = widget.existing != null;
+
+    return Container(
+      color: Colors.white,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Drag Handle
+          const SizedBox(height: 12),
+          Center(
+            child: Container(
+              width: 44,
+              height: 5,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+
+          // Modal Header
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: const BoxDecoration(
+                    color: AppColors.lightGreen,
+                    shape: BoxShape.circle,
+                  ),
+                  child: const Icon(Icons.alarm_add_rounded, color: AppColors.primary, size: 24),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        isEdit ? 'Edit Medication Alarm' : 'Set Medication Alarm',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.textDark,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Set exact pill schedule with personalized alarm sounds',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 11.5,
+                          color: AppColors.textGrey,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close_rounded, size: 22, color: AppColors.textGrey),
+                  onPressed: widget.onClose,
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 20),
+
+          // Modal Scrollable Content
+          Expanded(
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              padding: EdgeInsets.fromLTRB(20, 4, 20, MediaQuery.of(context).viewInsets.bottom + 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Prescription Suggestions (if available)
+                  if (!isEdit && widget.prescriptionSuggestions.isNotEmpty) ...[
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF0FDF4),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0xFFA7F3D0)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              const Icon(Icons.auto_awesome, color: Color(0xFF16A34A), size: 16),
+                              const SizedBox(width: 6),
+                              Text(
+                                'Quick-fill from Doctor Prescriptions:',
+                                style: GoogleFonts.plusJakartaSans(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: const Color(0xFF166534),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: widget.prescriptionSuggestions.map((s) {
+                              return GestureDetector(
+                                onTap: () {
+                                  HapticFeedback.selectionClick();
+                                  setState(() {
+                                    _medCtrl.text = s['medicationName'] ?? '';
+                                    _dosageCtrl.text = s['dosage'] ?? '';
+                                    _freqCtrl.text = s['frequency'] ?? '';
+                                    if (s['reminderTime'] != null && (s['reminderTime'] as String).isNotEmpty) {
+                                      _reminderTimeStr = s['reminderTime'];
+                                    }
+                                  });
+                                },
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: const Color(0xFF86EFAC)),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      const Icon(Icons.medication, size: 14, color: AppColors.primary),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        '${s['medicationName']} (${s['dosage']})',
+                                        style: const TextStyle(fontSize: 11, color: AppColors.primary, fontWeight: FontWeight.w700),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+
+                  // Medication Name
+                  PharmaField(
+                    label: 'Medication Name *',
+                    hint: 'e.g. Artemether, Amoxicillin 500mg, Paracetamol',
+                    prefixIcon: Icons.medication_outlined,
+                    controller: _medCtrl,
+                  ),
+                  const SizedBox(height: 14),
+
+                  // Dosage & Frequency
+                  Row(
+                    children: [
+                      Expanded(
+                        child: PharmaField(
+                          label: 'Dosage',
+                          hint: 'e.g. 1 tablet, 2 capsules',
+                          prefixIcon: Icons.colorize_outlined,
+                          controller: _dosageCtrl,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: PharmaField(
+                          label: 'Frequency',
+                          hint: 'e.g. Twice Daily',
+                          prefixIcon: Icons.repeat_rounded,
+                          controller: _freqCtrl,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+
+                  // Quick Frequencies
+                  const Text('Quick Presets:', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.textGrey)),
+                  const SizedBox(height: 6),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: _quickFrequencies.map((f) {
+                      final isCur = _freqCtrl.text == f;
+                      return GestureDetector(
+                        onTap: () {
+                          HapticFeedback.selectionClick();
+                          setState(() {
+                            _freqCtrl.text = f;
+                            if (f.contains('3 Times')) _reminderTimeStr = '08:00 AM, 01:00 PM, 08:00 PM';
+                            if (f.contains('Twice')) _reminderTimeStr = '08:00 AM, 08:00 PM';
+                            if (f.contains('Once')) _reminderTimeStr = '08:00 AM';
+                            if (f.contains('Bedtime')) _reminderTimeStr = '09:00 PM';
+                            if (f.contains('6 Hours')) _reminderTimeStr = '08:00 AM, 12:00 PM, 04:00 PM, 08:00 PM';
+                          });
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: isCur ? AppColors.primary : const Color(0xFFF1F5F9),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: isCur ? AppColors.primary : const Color(0xFFE2E8F0)),
+                          ),
+                          child: Text(
+                            f,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: isCur ? Colors.white : const Color(0xFF334155),
+                            ),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 18),
+
+                  // Scheduled Alarm Time Card
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: const BoxDecoration(color: Color(0xFFE0F2FE), shape: BoxShape.circle),
+                          child: const Icon(Icons.access_time_filled, color: Color(0xFF0284C7), size: 22),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _reminderTimeStr,
+                                style: GoogleFonts.plusJakartaSans(fontSize: 15, fontWeight: FontWeight.w800, color: AppColors.primary),
+                              ),
+                              const Text('Alarm rings at this time', style: TextStyle(fontSize: 11, color: AppColors.textGrey)),
+                            ],
+                          ),
+                        ),
+                        ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          ),
+                          icon: const Icon(Icons.schedule, size: 15),
+                          label: const Text('Pick Time', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                          onPressed: () async {
+                            final t = await showTimePicker(
+                              context: context,
+                              initialTime: TimeOfDay.now(),
+                            );
+                            if (t != null && mounted) {
+                              setState(() => _reminderTimeStr = t.format(context));
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+
+                  // Sound Selector
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: const [
+                      Text('Alert Sound Tone', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+                      Icon(Icons.volume_up_outlined, size: 16, color: AppColors.primary),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _RemindersScreenState.soundThemes.map((s) {
+                      final isSelected = _selectedSound == s['id'];
+                      final color = s['color'] as Color;
+                      return GestureDetector(
+                        onTap: () {
+                          HapticFeedback.selectionClick();
+                          setState(() => _selectedSound = s['id']);
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                          decoration: BoxDecoration(
+                            color: isSelected ? color.withValues(alpha: 0.12) : const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: isSelected ? color : const Color(0xFFE2E8F0), width: isSelected ? 2.0 : 1.0),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(s['icon'] as IconData, size: 14, color: isSelected ? color : Colors.grey[600]),
+                              const SizedBox(width: 5),
+                              Text(
+                                s['title'] as String,
+                                style: TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: isSelected ? FontWeight.w800 : FontWeight.w500,
+                                  color: isSelected ? color : Colors.black87,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Notes / Instructions
+                  PharmaField(
+                    label: 'Instructions & Notes (Optional)',
+                    hint: 'e.g. Take with a large glass of water after meal',
+                    prefixIcon: Icons.notes_rounded,
+                    controller: _notesCtrl,
+                  ),
+                  const SizedBox(height: 22),
+
+                  // Action Button
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        elevation: 2,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                      icon: const Icon(Icons.check_circle_rounded, size: 20),
+                      label: Text(
+                        isEdit ? 'Update Medication Reminder' : 'Save & Set Reminder Alarm ⏰',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                        ),
+                      ),
+                      onPressed: _handleSave,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ],
       ),

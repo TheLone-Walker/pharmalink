@@ -34,13 +34,21 @@ npm run db:seed
 npm run dev            # runs on http://localhost:3000
 ```
 
-### Flutter
+### Flutter App & Web Setup
 ```bash
 cd flutter_app
 flutter pub get
-# Set baseUrl in lib/utils/constants.dart
-flutter run
+
+# Option 1: Run locally on Chrome Desktop
+flutter run -d chrome --no-dds --web-port 8080 --dart-define=USE_LOCAL=true
+
+# Option 2: Serve across Local Wi-Fi to physical smartphones (Android / iPhone)
+flutter run -d web-server --web-hostname 0.0.0.0 --web-port 8080 --dart-define=USE_LOCAL=true --web-renderer html
+
+# Option 3: Optimized Fast Release Mode for mobile testing
+flutter run --release -d web-server --web-hostname 0.0.0.0 --web-port 8080 --dart-define=USE_LOCAL=true --web-renderer html
 ```
+> 📱 **Testing on Mobile via Wi-Fi:** Open Chrome or Safari on your phone and browse to `http://<YOUR_PC_IP>:8080` (e.g. `http://192.168.1.102:8080`). Ensure both PC and phone are connected to the same Wi-Fi network (do not use `localhost` on mobile).
 
 ---
 
@@ -54,12 +62,14 @@ flutter run
 |---|------|-------|-------|--------|
 | 1 | **PharmaLink Admin** | `admin@pharmalink.cm` | `+237600000001` | Active |
 
-### 🩺 Doctors (51)
+### 🩺 Doctors (52)
 
-| # | Doctor Name | Email | Phone | Hospital / Affiliation | Specialty |
-|---|-------------|-------|-------|------------------------|-----------|
-| 1 | **Dr. Amadou** | `amadou@pharmalink.cm` | `+237600000002` | Yaoundé Central Hospital | General Practitioner |
-| 2 | **Dr. Jean-Pierre Mbarga** | `doctor1@pharmalink.cm` | `+237620001000` | Yaoundé General Hospital | Cardiologist |
+| # | Doctor Name | Email | Phone | Hospital / Affiliation | Specialty | Status / License |
+|---|-------------|-------|-------|------------------------|-----------|------------------|
+| 1 | **Dr. Marie Nguema** | `MarieNguema@doctor.cm` | `+237689568459` | Yaoundé Central Hospital | Cardiology | 🟢 Verified (`ONMC/2023/8492`) |
+| 2 | **Dr. Marie Ngo** | `mariengo@pharmalink.cm` | `+237600000012` | CHUY & Clinique Bastos | Cardiology | 🟢 Verified (`DOC-2024-002`) |
+| 3 | **Dr. Amadou** | `amadou@pharmalink.cm` | `+237600000002` | Yaoundé Central Hospital | General Practitioner | 🟢 Verified (`DOC-2024-001`) |
+| 4 | **Dr. Jean-Pierre Mbarga** | `doctor1@pharmalink.cm` | `+237620001000` | Yaoundé General Hospital | Cardiologist | Active |
 | 3 | **Dr. Sophie Ngo Bilong** | `doctor2@pharmalink.cm` | `+237620001001` | CHUY (Teaching Hospital Yaoundé) | Dermatologist |
 | 4 | **Dr. Alain Fotso** | `doctor3@pharmalink.cm` | `+237620001002` | Douala General Hospital | Pediatrician |
 | 5 | **Dr. Grace Ngum** | `doctor4@pharmalink.cm` | `+237620001003` | Laquintinie Hospital Douala | Neurologist |
@@ -329,15 +339,17 @@ PharmaLink includes official preloaded national registry datasets for Yaoundé t
 - Order Options (delivery vs pickup modal)
 - Payment (Momo, Orange Money, Card, Cash)
 - My Orders (tabs: active / completed / cancelled)
-- Delivery Tracking (Google Maps + Socket.io live)
-- OTP Confirm
+- Delivery Tracking (Google Maps + Socket.io live tracking)
+- **Automated Courier Dispatch** (Auto-assigns nearest online approved courier based on GPS distance)
+- **Instant Switch to Counter Pickup Pass** (Instant digital QR & `PK-XXXX` pass for in-person pharmacy collection if in a hurry or no courier available)
+- OTP Confirm & Secure Handover
 - Signature Capture
 - Delivery Success
-- Pickup Success (with pickup code display)
+- Pickup Success (with instant QR pass and PK-XXXX display)
 - Book Appointment
 - My Prescriptions
 - Medical History
-- Reminders (add/toggle/delete)
+- Reminders (add/toggle/delete, localized notification intervals)
 - AI Chatbot (Gemini)
 - Telemedicine (chat + simulated video call)
 - Complaints (submit + view)
@@ -410,6 +422,8 @@ GET  /api/pharmacies/:id
 POST /api/orders
 GET  /api/orders
 GET  /api/orders/:id
+POST /api/orders/:id/auto-assign         (auto-dispatch nearest online approved courier)
+PATCH /api/orders/:id/switch-to-pickup   (emergency instant counter pickup pass PK-XXXX)
 POST /api/orders/:id/otp/generate
 POST /api/orders/:id/otp/verify
 POST /api/orders/:id/signature

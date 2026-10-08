@@ -126,7 +126,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       default:
         imagePath = 'assets/images/patient_portrait_hero.jpg';
         title = 'Patient & Family Healthcare';
-        subtitle = 'Search pharmacy stock, upload prescriptions & book doctor visits';
+        subtitle = 'Search pharmacy stock, doctor digital prescriptions & consultations';
         accentColor = AppColors.primary;
         iconData = Icons.person_rounded;
         break;

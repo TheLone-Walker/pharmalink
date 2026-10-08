@@ -15,10 +15,11 @@ dependencies:
   shared_preferences: ^2.2.2
   google_maps_flutter: ^2.5.3
   socket_io_client: ^2.0.3+1
-  flutter_local_notifications: ^16.3.0
+  flutter_local_notifications: ^17.2.3
   image_picker: ^1.0.7
-  file_picker: ^8.0.3
+  file_picker: ^8.1.7
   signature: ^5.4.1
+  qr_flutter: ^4.1.0
   intl: ^0.18.1
   cached_network_image: ^3.3.1
   google_fonts: ^6.1.0

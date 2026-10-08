@@ -266,85 +266,100 @@ class _BookAppointmentScreenState extends State<BookAppointmentScreen> {
     final availList = (_doctorSchedule?['availability'] as List? ?? []);
     final blockedList = (_doctorSchedule?['blockedTimes'] as List? ?? []);
 
-    showModalBottomSheet(
+    showDialog(
       context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-              Row(children: [
-                const Icon(Icons.schedule_rounded, color: AppColors.primary, size: 22),
-                const SizedBox(width: 8),
-                Text('Dr. ${_selectedDoctor!['name']}\'s Schedule',
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-              ]),
-              IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
-            ]),
-            const Divider(height: 20),
-            const Text('Weekly Consultation Hours', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
-            const SizedBox(height: 10),
-            if (availList.isEmpty)
-              const Text('Standard Office Hours: Monday - Friday, 08:00 AM - 05:00 PM', style: TextStyle(fontSize: 12, color: AppColors.textGrey))
-            else
-              ..._daysOfWeek.asMap().entries.map((e) {
-                Map<String, dynamic>? day;
-                for (final a in availList) {
-                  if (a is Map && a['dayOfWeek'] == e.key) {
-                    day = Map<String, dynamic>.from(a);
-                    break;
-                  }
-                }
-                final isAvailable = day?['isAvailable'] ?? (e.key < 5);
-                final start = day?['startTime'] ?? '08:00';
-                final end = day?['endTime'] ?? '17:00';
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                    Text(e.value, style: const TextStyle(fontSize: 12, color: AppColors.textDark)),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: isAvailable ? AppColors.lightGreen : const Color(0xFFFFEBEE),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        isAvailable ? '$start - $end' : 'Day Off',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: isAvailable ? AppColors.primary : AppColors.error,
+      barrierDismissible: true,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 16,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        child: Container(
+          width: double.infinity,
+          constraints: const BoxConstraints(maxWidth: 480, maxHeight: 600),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+          ),
+          padding: const EdgeInsets.all(20),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  Row(children: [
+                    const Icon(Icons.schedule_rounded, color: AppColors.primary, size: 22),
+                    const SizedBox(width: 8),
+                    Text('Dr. ${_selectedDoctor!['name']}\'s Schedule',
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  ]),
+                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(ctx)),
+                ]),
+                const Divider(height: 20),
+                const Text('Weekly Consultation Hours', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                const SizedBox(height: 10),
+                if (availList.isEmpty)
+                  const Text('Standard Office Hours: Monday - Friday, 08:00 AM - 05:00 PM', style: TextStyle(fontSize: 12, color: AppColors.textGrey))
+                else
+                  ..._daysOfWeek.asMap().entries.map((e) {
+                    Map<String, dynamic>? day;
+                    for (final a in availList) {
+                      if (a is Map && a['dayOfWeek'] == e.key) {
+                        day = Map<String, dynamic>.from(a);
+                        break;
+                      }
+                    }
+                    final isAvailable = day?['isAvailable'] ?? (e.key < 5);
+                    final start = day?['startTime'] ?? '08:00';
+                    final end = day?['endTime'] ?? '17:00';
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                        Text(e.value, style: const TextStyle(fontSize: 12, color: AppColors.textDark)),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: isAvailable ? AppColors.lightGreen : const Color(0xFFFFEBEE),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            isAvailable ? '$start - $end' : 'Day Off',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              color: isAvailable ? AppColors.primary : AppColors.error,
+                            ),
+                          ),
                         ),
-                      ),
-                    ),
-                  ]),
-                );
-              }),
-            if (blockedList.isNotEmpty) ...[
-              const SizedBox(height: 16),
-              const Text('Doctor Blocked Personal Times', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: Colors.orange)),
-              const SizedBox(height: 8),
-              ...blockedList.take(3).map((b) {
-                final start = DateTime.tryParse(b['startDate'] ?? '');
-                return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Row(children: [
-                    const Icon(Icons.block, size: 13, color: Colors.orange),
-                    const SizedBox(width: 6),
-                    Text(
-                      '${start != null ? '${start.day}/${start.month}/${start.year}' : ''} (${b['reason'] ?? 'Personal / Surgery'})',
-                      style: const TextStyle(fontSize: 11, color: Colors.black54),
-                    ),
-                  ]),
-                );
-              }),
-            ],
-            const SizedBox(height: 20),
-          ],
+                      ]),
+                    );
+                  }),
+                if (blockedList.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  const Text('Doctor Blocked Personal Times', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: Colors.orange)),
+                  const SizedBox(height: 8),
+                  ...blockedList.take(3).map((b) {
+                    final start = DateTime.tryParse(b['startDate'] ?? '');
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(children: [
+                        const Icon(Icons.block, size: 13, color: Colors.orange),
+                        const SizedBox(width: 6),
+                        Text(
+                          '${start != null ? '${start.day}/${start.month}/${start.year}' : ''} (${b['reason'] ?? 'Personal / Surgery'})',
+                          style: const TextStyle(fontSize: 11, color: Colors.black54),
+                        ),
+                      ]),
+                    );
+                  }),
+                ],
+                const SizedBox(height: 10),
+              ],
+            ),
+          ),
         ),
       ),
     );

@@ -29,21 +29,174 @@
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>pharmalink</title>
+  <title>PharmaLink - Digital Healthcare</title>
   <link rel="manifest" href="manifest.json">
 
-  <!-- Google Maps JavaScript API for Flutter Web -->
-  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCyWlMnNK7MBRv1pKcsJ6rkf9A4_Gp4X44"></script>
+  <!-- Preconnect and load Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Google Maps JavaScript API for Flutter Web (non-blocking) -->
+  <script async defer src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCyWlMnNK7MBRv1pKcsJ6rkf9A4_Gp4X44"></script>
+
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background: #042F24;
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      overflow: hidden;
+    }
+    #loading-splash {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: linear-gradient(135deg, #042F24 0%, #064E3B 50%, #0D6E48 100%);
+      color: white;
+      z-index: 999999;
+      transition: opacity 0.4s ease-out;
+      cursor: pointer;
+    }
+    .splash-logo {
+      width: 80px;
+      height: 80px;
+      background: white;
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.25);
+      margin-bottom: 20px;
+      animation: pulse-glow 2s infinite ease-in-out;
+    }
+    .splash-logo svg {
+      width: 44px;
+      height: 44px;
+      fill: #0D6E48;
+    }
+    .splash-title {
+      font-size: 24px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      margin: 0 0 6px 0;
+      color: #ffffff;
+    }
+    .splash-subtitle {
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.75);
+      margin: 0 0 28px 0;
+    }
+    .spinner {
+      width: 36px;
+      height: 36px;
+      border: 3.5px solid rgba(255, 255, 255, 0.2);
+      border-top-color: #10B981;
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+    .splash-status {
+      margin-top: 14px;
+      font-size: 12px;
+      color: rgba(255, 255, 255, 0.6);
+      font-weight: 500;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes pulse-glow {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.05); }
+    }
+    #error-banner {
+      display: none;
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      right: 20px;
+      background: #EF4444;
+      color: white;
+      padding: 14px;
+      border-radius: 12px;
+      font-size: 13px;
+      z-index: 1000000;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+    }
+  </style>
 </head>
 <body>
-  <!--
-    You can customize the "flutter_bootstrap.js" script.
-    This is useful to provide a custom configuration to the Flutter loader
-    or to give the user feedback during the initialization process.
+  <!-- Instant loading splash with auto-dismiss safeguards -->
+  <div id="loading-splash">
+    <div class="splash-logo">
+      <svg viewBox="0 0 24 24">
+        <path d="M4.5 10.5C3.67 10.5 3 11.17 3 12s.67 1.5 1.5 1.5h15c.83 0 1.5-.67 1.5-1.5s-.67-1.5-1.5-1.5h-15z"/>
+        <path d="M10.5 4.5C10.5 3.67 11.17 3 12 3s1.5.67 1.5 1.5v15c0 .83-.67 1.5-1.5 1.5s-1.5-.67-1.5-1.5v-15z"/>
+      </svg>
+    </div>
+    <div class="splash-title">PharmaLink</div>
+    <div class="splash-subtitle">National Digital Health Network</div>
+    <div class="spinner"></div>
+    <div class="splash-status" id="splash-status">Starting healthcare engine...</div>
+  </div>
 
-    For more details:
-    * https://docs.flutter.dev/platform-integration/web/initialization
-  -->
+  <div id="error-banner"></div>
+
+  <script>
+    window.addEventListener('error', function(e) {
+      console.error('Web error:', e);
+      var banner = document.getElementById('error-banner');
+      if (banner && e && e.message) {
+        banner.style.display = 'block';
+        banner.innerText = 'Connection/Script Error: ' + e.message;
+      }
+    });
+
+    function dismissSplash() {
+      var splash = document.getElementById('loading-splash');
+      if (splash) {
+        splash.style.opacity = '0';
+        splash.style.pointerEvents = 'none';
+        setTimeout(function() { 
+          if (splash && splash.parentNode) splash.parentNode.removeChild(splash); 
+        }, 450);
+      }
+    }
+
+    // Trigger 1: Flutter first frame event
+    window.addEventListener('flutter-first-frame', dismissSplash);
+
+    // Trigger 2: Observe DOM insertion of Flutter canvas/view
+    try {
+      var observer = new MutationObserver(function() {
+        if (document.querySelector('flt-glass-pane') || document.querySelector('flutter-view')) {
+          setTimeout(dismissSplash, 200);
+          observer.disconnect();
+        }
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    } catch (_) {}
+
+    // Trigger 3: Soft timeout allowing tap to dismiss after 4s
+    setTimeout(function() {
+      var status = document.getElementById('splash-status');
+      if (status) status.innerText = 'Ready! Tap to continue';
+      var splash = document.getElementById('loading-splash');
+      if (splash) {
+        splash.onclick = dismissSplash;
+        splash.ontouchstart = dismissSplash;
+      }
+    }, 4000);
+
+    // Trigger 4: Hard fallback (auto-remove after 8s)
+    setTimeout(dismissSplash, 8000);
+  </script>
+
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

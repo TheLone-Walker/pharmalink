@@ -1,9 +1,7 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../services/api_service.dart';
 import '../../utils/constants.dart';
-import '../../utils/doc_picker_helper.dart';
 import '../../widgets/shared_widgets.dart';
 import '../../widgets/location_autocomplete_field.dart';
 import 'my_orders_screen.dart';
@@ -41,16 +39,31 @@ class _MyPrescriptionsScreenState extends State<MyPrescriptionsScreen> {
 
   // ─── Open Pharmacy Selector Modal ──────────────────────────────────────────
   void _openSendToPharmacyModal(Map<String, dynamic> prescription) {
-    showModalBottomSheet(
+    showDialog(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (ctx) => _PharmacyPickerSheet(
-        prescription: prescription,
-        onPharmacySelected: (selectedPharmacy) {
-          Navigator.pop(ctx);
-          _openCheckoutModal(prescription, selectedPharmacy);
-        },
+      barrierDismissible: true,
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 16,
+        clipBehavior: Clip.antiAlias,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        child: Container(
+          width: double.infinity,
+          constraints: const BoxConstraints(maxWidth: 540, maxHeight: 680),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(24),
+          ),
+          child: _PharmacyPickerSheet(
+            prescription: prescription,
+            onPharmacySelected: (selectedPharmacy) {
+              Navigator.pop(ctx);
+              _openCheckoutModal(prescription, selectedPharmacy);
+            },
+          ),
+        ),
       ),
     );
   }
@@ -63,26 +76,30 @@ class _MyPrescriptionsScreenState extends State<MyPrescriptionsScreen> {
     final pharmacyName = pharmacy['pharmacyName'] ?? 'Pharmacy';
     final estPrice = pharmacy['estimatedTotalFcfa'] ?? 3500;
 
-    showModalBottomSheet(
+    showDialog(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
+      barrierDismissible: true,
       builder: (ctx) => StatefulBuilder(
         builder: (context, setModalState) {
-          return Container(
-            padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-            ),
-            child: SingleChildScrollView(
+          return Dialog(
+            backgroundColor: Colors.white,
+            surfaceTintColor: Colors.transparent,
+            elevation: 16,
+            clipBehavior: Clip.antiAlias,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+            insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+            child: Container(
+              width: double.infinity,
+              constraints: const BoxConstraints(maxWidth: 520, maxHeight: 680),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+              ),
               padding: const EdgeInsets.all(20),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Center(child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)))),
-                  const SizedBox(height: 12),
                   Row(
                     children: [
                       Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: AppColors.lightGreen, borderRadius: BorderRadius.circular(10)), child: const Icon(Icons.shopping_bag_outlined, color: AppColors.primary, size: 22)),
@@ -103,109 +120,117 @@ class _MyPrescriptionsScreenState extends State<MyPrescriptionsScreen> {
                   const Divider(height: 1),
                   const SizedBox(height: 14),
 
-                  // Fulfillment Method Selector
-                  const Text('1. Choose Fulfillment Method:', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.textDark)),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: () => setModalState(() => orderType = 'pickup'),
-                          child: Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: orderType == 'pickup' ? const Color(0xFFF0FDF4) : const Color(0xFFF8FAFC),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: orderType == 'pickup' ? AppColors.primary : const Color(0xFFE2E8F0), width: orderType == 'pickup' ? 2 : 1),
-                            ),
-                            child: Column(
-                              children: const [
-                                Icon(Icons.storefront, color: AppColors.primary, size: 24),
-                                SizedBox(height: 6),
-                                Text('Pick up at Pharmacy', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
-                                Text('In-store validation', style: TextStyle(fontSize: 10, color: AppColors.textGrey)),
-                              ],
-                            ),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          // Fulfillment Method Selector
+                          const Text('1. Choose Fulfillment Method:', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.textDark)),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: GestureDetector(
+                                  onTap: () => setModalState(() => orderType = 'pickup'),
+                                  child: Container(
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: orderType == 'pickup' ? const Color(0xFFF0FDF4) : const Color(0xFFF8FAFC),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(color: orderType == 'pickup' ? AppColors.primary : const Color(0xFFE2E8F0), width: orderType == 'pickup' ? 2 : 1),
+                                    ),
+                                    child: Column(
+                                      children: const [
+                                        Icon(Icons.storefront, color: AppColors.primary, size: 24),
+                                        SizedBox(height: 6),
+                                        Text('Pick up at Pharmacy', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+                                        Text('In-store validation', style: TextStyle(fontSize: 10, color: AppColors.textGrey)),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: GestureDetector(
+                                  onTap: () => setModalState(() => orderType = 'delivery'),
+                                  child: Container(
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: orderType == 'delivery' ? const Color(0xFFEFF6FF) : const Color(0xFFF8FAFC),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(color: orderType == 'delivery' ? Colors.blue[700]! : const Color(0xFFE2E8F0), width: orderType == 'delivery' ? 2 : 1),
+                                    ),
+                                    child: Column(
+                                      children: [
+                                        Icon(Icons.delivery_dining, color: Colors.blue[700], size: 24),
+                                        const SizedBox(height: 6),
+                                        const Text('Home Delivery', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+                                        const Text('Driver dispatched', style: TextStyle(fontSize: 10, color: AppColors.textGrey)),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: GestureDetector(
-                          onTap: () => setModalState(() => orderType = 'delivery'),
-                          child: Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: orderType == 'delivery' ? const Color(0xFFEFF6FF) : const Color(0xFFF8FAFC),
-                              borderRadius: BorderRadius.circular(12),
-                              border: Border.all(color: orderType == 'delivery' ? Colors.blue[700]! : const Color(0xFFE2E8F0), width: orderType == 'delivery' ? 2 : 1),
-                            ),
-                            child: Column(
-                              children: [
-                                Icon(Icons.delivery_dining, color: Colors.blue[700], size: 24),
-                                const SizedBox(height: 6),
-                                const Text('Home Delivery', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
-                                const Text('Driver dispatched', style: TextStyle(fontSize: 10, color: AppColors.textGrey)),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
 
-                  if (orderType == 'delivery') ...[
-                    const SizedBox(height: 14),
-                    LocationAutocompleteField(
-                      controller: addressCtrl,
-                      label: 'Delivery Dropoff Address',
-                      hint: 'Type quarter or landmark (e.g. Bastos, Warda, Mokolo, Akwa)...',
-                      onLocationSelected: (loc) {
-                        setModalState(() {});
-                      },
+                          if (orderType == 'delivery') ...[
+                            const SizedBox(height: 14),
+                            LocationAutocompleteField(
+                              controller: addressCtrl,
+                              label: 'Delivery Dropoff Address',
+                              hint: 'Type quarter or landmark (e.g. Bastos, Warda, Mokolo, Akwa)...',
+                              onLocationSelected: (loc) {
+                                setModalState(() {});
+                              },
+                            ),
+                          ],
+
+                          const SizedBox(height: 16),
+
+                          // Payment Method Selector
+                          const Text('2. Choose Payment Method:', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.textDark)),
+                          const SizedBox(height: 8),
+                          _paymentOptionTile(
+                            title: 'MTN Mobile Money (MoMo)',
+                            subtitle: 'Pay instantly via MTN Cameroon',
+                            icon: Icons.phone_android,
+                            iconColor: const Color(0xFFF59E0B),
+                            isSelected: paymentMethod == 'momo',
+                            onTap: () => setModalState(() => paymentMethod = 'momo'),
+                          ),
+                          _paymentOptionTile(
+                            title: 'Orange Money',
+                            subtitle: 'Pay instantly via Orange Money',
+                            icon: Icons.phone_iphone,
+                            iconColor: const Color(0xFFEA580C),
+                            isSelected: paymentMethod == 'orange_money',
+                            onTap: () => setModalState(() => paymentMethod = 'orange_money'),
+                          ),
+                          _paymentOptionTile(
+                            title: 'Credit / Debit Card (Visa / Mastercard)',
+                            subtitle: 'Secure card checkout',
+                            icon: Icons.credit_card,
+                            iconColor: const Color(0xFF2563EB),
+                            isSelected: paymentMethod == 'card',
+                            onTap: () => setModalState(() => paymentMethod = 'card'),
+                          ),
+                          _paymentOptionTile(
+                            title: orderType == 'delivery' ? 'Pay Cash on Delivery (After OTP validation)' : 'Pay Cash at Counter (Upon Pickup)',
+                            subtitle: 'Handover cash after OTP verification',
+                            icon: Icons.payments_outlined,
+                            iconColor: const Color(0xFF16A34A),
+                            isSelected: paymentMethod == 'cash',
+                            onTap: () => setModalState(() => paymentMethod = 'cash'),
+                          ),
+                        ],
+                      ),
                     ),
-                  ],
-
-                  const SizedBox(height: 16),
-
-                  // Payment Method Selector
-                  const Text('2. Choose Payment Method:', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppColors.textDark)),
-                  const SizedBox(height: 8),
-                  _paymentOptionTile(
-                    title: 'MTN Mobile Money (MoMo)',
-                    subtitle: 'Pay instantly via MTN Cameroon',
-                    icon: Icons.phone_android,
-                    iconColor: const Color(0xFFF59E0B),
-                    isSelected: paymentMethod == 'momo',
-                    onTap: () => setModalState(() => paymentMethod = 'momo'),
-                  ),
-                  _paymentOptionTile(
-                    title: 'Orange Money',
-                    subtitle: 'Pay instantly via Orange Money',
-                    icon: Icons.phone_iphone,
-                    iconColor: const Color(0xFFEA580C),
-                    isSelected: paymentMethod == 'orange_money',
-                    onTap: () => setModalState(() => paymentMethod = 'orange_money'),
-                  ),
-                  _paymentOptionTile(
-                    title: 'Credit / Debit Card (Visa / Mastercard)',
-                    subtitle: 'Secure card checkout',
-                    icon: Icons.credit_card,
-                    iconColor: const Color(0xFF2563EB),
-                    isSelected: paymentMethod == 'card',
-                    onTap: () => setModalState(() => paymentMethod = 'card'),
-                  ),
-                  _paymentOptionTile(
-                    title: orderType == 'delivery' ? 'Pay Cash on Delivery (After OTP validation)' : 'Pay Cash at Counter (Upon Pickup)',
-                    subtitle: 'Handover cash after OTP verification',
-                    icon: Icons.payments_outlined,
-                    iconColor: const Color(0xFF16A34A),
-                    isSelected: paymentMethod == 'cash',
-                    onTap: () => setModalState(() => paymentMethod = 'cash'),
                   ),
 
-                  const SizedBox(height: 18),
-
+                  const SizedBox(height: 14),
                   SizedBox(
                     width: double.infinity,
                     height: 48,
@@ -232,7 +257,6 @@ class _MyPrescriptionsScreenState extends State<MyPrescriptionsScreen> {
                       },
                     ),
                   ),
-                  const SizedBox(height: 10),
                 ],
               ),
             ),
@@ -465,9 +489,10 @@ class _MyPrescriptionsScreenState extends State<MyPrescriptionsScreen> {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
+        heroTag: 'fab_consult_doc',
         backgroundColor: AppColors.primary,
         icon: const Icon(Icons.medical_services_rounded, color: Colors.white),
-        label: Text('Consult Doctor', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700, color: Colors.white)),
+        label: Text('Consult Doctor Online', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700, color: Colors.white)),
         onPressed: _bookDoctorConsultation,
       ),
       body: _loading
@@ -971,20 +996,12 @@ class _PharmacyPickerSheetState extends State<_PharmacyPickerSheet> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: MediaQuery.of(context).size.height * 0.90,
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.circular(24),
       ),
       child: Column(
         children: [
-          // Drag handle
-          Container(
-            margin: const EdgeInsets.only(top: 10, bottom: 4),
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
-          ),
 
           // Header
           Padding(

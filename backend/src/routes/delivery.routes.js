@@ -5,14 +5,35 @@ const { authenticate } = require('../middleware/auth.middleware');
 
 router.get('/:orderId', authenticate, async (req, res, next) => {
   try {
-    const delivery = await prisma.delivery.findFirst({
+    let delivery = await prisma.delivery.findFirst({
       where: { orderId: req.params.orderId },
       include: {
         driver: { include: { user: { select: { name: true, phone: true, profilePhotoUrl: true } } } },
         order: true,
       },
     });
-    if (!delivery) throw { status: 404, message: 'Delivery not found' };
+
+    if (!delivery) {
+      const order = await prisma.order.findUnique({
+        where: { id: req.params.orderId },
+      });
+      if (!order) throw { status: 404, message: 'Order not found' };
+
+      // Automatically create a pending delivery record for the delivery order
+      delivery = await prisma.delivery.create({
+        data: {
+          orderId: order.id,
+          status: 'assigned',
+          currentLat: order.deliveryLat || 3.848,
+          currentLng: order.deliveryLng || 11.502,
+        },
+        include: {
+          driver: { include: { user: { select: { name: true, phone: true, profilePhotoUrl: true } } } },
+          order: true,
+        },
+      });
+    }
+
     res.json({ success: true, data: delivery });
   } catch (err) { next(err); }
 });

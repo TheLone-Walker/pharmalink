@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import '../../services/api_service.dart';
 import '../../utils/constants.dart';
+import 'delivery_tracking_screen.dart';
 
 class DigitalReceiptScreen extends StatefulWidget {
   final String orderId;
@@ -269,6 +271,136 @@ class _DigitalReceiptScreenState extends State<DigitalReceiptScreen> {
                     ],
                   ),
                 ),
+                // Counter Pickup Pass or Delivery Status Alert
+                if (r['orderType'] != 'delivery') ...[
+                  Container(
+                    margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF0FDF4),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFF86EFAC), width: 1.5),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(8),
+                              decoration: const BoxDecoration(color: Color(0xFFDCFCE7), shape: BoxShape.circle),
+                              child: const Icon(Icons.storefront_rounded, color: Color(0xFF16A34A), size: 22),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'PHARMACY COUNTER PICKUP PASS',
+                                    style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.w800, color: const Color(0xFF166534)),
+                                  ),
+                                  Text(
+                                    'Present this receipt & code at the pharmacy counter',
+                                    style: GoogleFonts.plusJakartaSans(fontSize: 11, color: const Color(0xFF15803D)),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: const Color(0xFFBBF7D0)),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'COUNTER PICKUP CODE',
+                                    style: TextStyle(fontSize: 9.5, fontWeight: FontWeight.w700, color: Color(0xFF64748B)),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    r['pickupCode']?.toString() ?? 'PK-${widget.orderId.substring(0, 4).toUpperCase()}',
+                                    style: GoogleFonts.jetBrainsMono(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w900,
+                                      color: const Color(0xFF0F172A),
+                                      letterSpacing: 1.2,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              QrImageView(
+                                data: 'PHARMALINK:PICKUP:${r['orderId']}:${r['pickupCode'] ?? widget.orderId}',
+                                version: QrVersions.auto,
+                                size: 50.0,
+                                eyeStyle: const QrEyeStyle(eyeShape: QrEyeShape.square, color: Color(0xFF166534)),
+                                dataModuleStyle: const QrDataModuleStyle(dataModuleShape: QrDataModuleShape.square, color: Color(0xFF0F172A)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ] else if (r['orderStatus'] != 'delivered') ...[
+                  Container(
+                    margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFEFF6FF),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFBFDBFE)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.delivery_dining_rounded, color: Color(0xFF2563EB), size: 22),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Delivery In Progress',
+                                style: GoogleFonts.plusJakartaSans(fontSize: 12, fontWeight: FontWeight.w800, color: const Color(0xFF1E40AF)),
+                              ),
+                              Text(
+                                'Official delivery receipt will be finalized upon courier doorstep delivery.',
+                                style: GoogleFonts.plusJakartaSans(fontSize: 10.5, color: const Color(0xFF1E3A8A)),
+                              ),
+                            ],
+                          ),
+                        ),
+                        ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF2563EB),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            minimumSize: const Size(0, 32),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                          ),
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (_) => DeliveryTrackingScreen(orderId: widget.orderId)),
+                            );
+                          },
+                          child: const Text('Track', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
 
                 // Parties Info: Pharmacy & Patient
                 Padding(

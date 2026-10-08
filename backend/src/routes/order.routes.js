@@ -9,6 +9,8 @@ router.get('/',                         authenticate, ctrl.getMyOrders);
 router.get('/:id',                      authenticate, ctrl.getOrderById);
 router.get('/:id/receipt',              authenticate, ctrl.getOrderReceipt);
 router.patch('/:id/cancel',             authenticate, authorize('patient'), ctrl.cancelOrder);
+router.patch('/:id/switch-to-pickup',    authenticate, ctrl.switchToPickup);
+router.post('/:id/auto-assign',         authenticate, ctrl.autoAssignDriver);
 router.patch('/:id/status',             authenticate, ctrl.updateStatus);
 router.post('/:id/otp/generate',        authenticate, ctrl.generateOrderOtp);
 router.post('/:id/otp/verify',          authenticate, ctrl.verifyOrderOtp);

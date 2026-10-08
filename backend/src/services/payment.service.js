@@ -65,7 +65,28 @@ class PaymentService {
       },
     });
 
-    // 2. Cash on delivery handling
+    // 2. Free medication / 0 FCFA order handling
+    if (amount <= 0) {
+      const updatedTx = await prisma.transaction.update({
+        where: { id: transaction.id },
+        data: { status: 'completed' },
+      });
+      if (orderId) {
+        await prisma.order.update({
+          where: { id: orderId },
+          data: { status: 'confirmed', paymentStatus: 'paid' },
+        }).catch(() => {});
+      }
+      return {
+        success: true,
+        reference,
+        status: 'completed',
+        message: '🎁 Free medication order confirmed at 0 FCFA. Delivery registered!',
+        transaction: updatedTx,
+      };
+    }
+
+    // 2b. Cash on delivery handling
     if (method === 'cash') {
       if (orderId) {
         await prisma.order.update({
