@@ -8,6 +8,7 @@ router.get('/deliveries',                  authenticate, authorize('delivery_dri
 router.patch('/deliveries/:id/accept',     authenticate, authorize('delivery_driver'), ctrl.acceptDelivery);
 router.patch('/deliveries/:id/pickup',     authenticate, authorize('delivery_driver'), ctrl.confirmPickup);
 router.patch('/deliveries/:id/deliver',    authenticate, authorize('delivery_driver'), ctrl.confirmDelivery);
+router.post('/deliveries/:id/verify-code',  authenticate, authorize('delivery_driver'), ctrl.verifyDeliveryCode);
 router.post('/deliveries/:id/photo',       authenticate, authorize('delivery_driver'), upload.single('photo'), ctrl.uploadDeliveryPhoto);
 router.put('/location',                    authenticate, authorize('delivery_driver'), ctrl.updateLocation);
 router.get('/status',                      authenticate, authorize('delivery_driver'), ctrl.getStatus);

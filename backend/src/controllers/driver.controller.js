@@ -288,11 +288,77 @@ const uploadDocuments = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
+const verifyDeliveryCode = async (req, res, next) => {
+  try {
+    const { code, otp } = req.body;
+    const inputCode = (code || otp || '').toString().trim();
+    if (!inputCode) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please provide either the 4-digit OTP or scanned QR code data.',
+      });
+    }
+
+    const delivery = await prisma.delivery.findUnique({
+      where: { id: req.params.id },
+      include: { order: true },
+    });
+    if (!delivery) throw { status: 404, message: 'Delivery not found' };
+
+    if (delivery.status === 'delivered') {
+      return res.status(400).json({
+        success: false,
+        message: 'This delivery has already been completed.',
+      });
+    }
+
+    const expectedOtp = (delivery.order?.otp || '').toString().trim();
+    const expectedOrderId = (delivery.orderId || '').toString().trim();
+
+    let extractedOtp = inputCode;
+    if (inputCode.includes(':')) {
+      const parts = inputCode.split(':');
+      if (parts.length >= 4 && parts[3]) {
+        extractedOtp = parts[3].trim();
+      } else if (parts.length >= 2 && parts[1] && parts[1].trim() === expectedOrderId && expectedOtp) {
+        extractedOtp = expectedOtp;
+      }
+    }
+
+    const normalize = (v) => (v || '').toString().trim().toUpperCase().replace(/^(PK-|OTP-|PL)/, '');
+    const cleanInput = normalize(extractedOtp);
+    const cleanExpected = normalize(expectedOtp);
+
+    const isMatch = (extractedOtp && extractedOtp === expectedOtp) ||
+                    (cleanInput && cleanInput === cleanExpected) ||
+                    (inputCode === `PHARMALINK_DELIVERY:${expectedOrderId}:${delivery.order?.patientId}:${expectedOtp}`);
+
+    if (!isMatch) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid OTP or QR code! Code does not match the patient\'s secret pass. Please ask the patient to check their PharmaLink app.',
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Code verified successfully! Proceed to digital signature.',
+      data: {
+        verified: true,
+        orderId: delivery.orderId,
+        deliveryId: delivery.id,
+        otp: expectedOtp,
+      },
+    });
+  } catch (err) { next(err); }
+};
+
 module.exports = {
   getDeliveries,
   acceptDelivery,
   confirmPickup,
   confirmDelivery,
+  verifyDeliveryCode,
   uploadDeliveryPhoto,
   updateLocation,
   setOnlineStatus,
