@@ -508,32 +508,30 @@ class _DriverHomeScreenState extends State<DriverHomeScreen> with WidgetsBinding
                         ),
                       ],
                     ),
-                    if (active['order']?['otp'] != null) ...[
-                      const SizedBox(height: 12),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFEF3C7),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(color: const Color(0xFFFDE68A)),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Icon(Icons.lock_clock_rounded, size: 16, color: Color(0xFFD97706)),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Recipient Verification OTP: ${active['order']['otp']}',
-                              style: GoogleFonts.plusJakartaSans(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w800,
-                                color: const Color(0xFF78350F),
-                              ),
-                            ),
-                          ],
-                        ),
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFEFF6FF),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFF93C5FD)),
                       ),
-                    ],
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.security_rounded, size: 16, color: Color(0xFF1D4ED8)),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Doorstep Security: Request 4-digit OTP from recipient',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: const Color(0xFF1E3A8A),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
                     const SizedBox(height: 16),
                     PharmaButton(
                       label: 'Launch Live Navigation Map',

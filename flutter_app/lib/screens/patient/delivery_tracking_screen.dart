@@ -159,7 +159,7 @@ class _DeliveryTrackingScreenState extends State<DeliveryTrackingScreen> {
     }
   }
 
-  void _showQrFullscreen(String qrData, String orderShortId) {
+  void _showQrFullscreen(String qrData, String orderShortId, {String? otp}) {
     showDialog(
       context: context,
       barrierDismissible: true,
@@ -180,7 +180,7 @@ class _DeliveryTrackingScreenState extends State<DeliveryTrackingScreen> {
               ),
               const SizedBox(height: 10),
               Text(
-                'Delivery QR Code',
+                'Delivery Verification Pass',
                 style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 18),
               ),
               Text(
@@ -213,7 +213,59 @@ class _DeliveryTrackingScreenState extends State<DeliveryTrackingScreen> {
                   ),
                 ),
               ),
-              const SizedBox(height: 16),
+              if (otp != null && otp.isNotEmpty) ...[
+                const SizedBox(height: 14),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFEF3C7),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: const Color(0xFFF59E0B), width: 1.5),
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.lock_rounded, size: 14, color: Color(0xFFB45309)),
+                          const SizedBox(width: 6),
+                          Text(
+                            'CONFIDENTIAL HANDOVER OTP',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                              color: const Color(0xFF92400E),
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        otp,
+                        style: GoogleFonts.spaceMono(
+                          fontSize: 28,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 6,
+                          color: const Color(0xFF78350F),
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Give or recite this code ONLY when the driver hands you your package.',
+                        style: GoogleFonts.plusJakartaSans(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFF92400E),
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              const SizedBox(height: 14),
               Container(
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
@@ -223,11 +275,11 @@ class _DeliveryTrackingScreenState extends State<DeliveryTrackingScreen> {
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.draw_rounded, color: AppColors.primary, size: 20),
+                    const Icon(Icons.verified_user_rounded, color: AppColors.primary, size: 20),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Present this to courier on arrival. Scanning will open your digital signature to confirm receipt.',
+                        'The driver cannot complete delivery without this OTP or QR scan. Keep it private until handover!',
                         style: GoogleFonts.plusJakartaSans(fontSize: 11.5, color: const Color(0xFF166534), height: 1.35),
                       ),
                     ),
@@ -256,7 +308,8 @@ class _DeliveryTrackingScreenState extends State<DeliveryTrackingScreen> {
     final driver = _delivery?['driver']?['user'];
     final order = _delivery?['order'];
     final orderShortId = (widget.orderId.length >= 8) ? widget.orderId.substring(0, 8).toUpperCase() : widget.orderId.toUpperCase();
-    final qrData = 'PHARMALINK_DELIVERY:${widget.orderId}:${order?['patientId'] ?? ''}';
+    final otp = order?['otp']?.toString() ?? '';
+    final qrData = 'PHARMALINK_DELIVERY:${widget.orderId}:${order?['patientId'] ?? ''}:${otp}';
 
     return Scaffold(
       appBar: AppBar(
@@ -265,7 +318,7 @@ class _DeliveryTrackingScreenState extends State<DeliveryTrackingScreen> {
           IconButton(
             icon: const Icon(Icons.qr_code_2_rounded),
             tooltip: 'View QR Code',
-            onPressed: () => _showQrFullscreen(qrData, orderShortId),
+            onPressed: () => _showQrFullscreen(qrData, orderShortId, otp: otp),
           ),
         ],
       ),
@@ -343,7 +396,7 @@ class _DeliveryTrackingScreenState extends State<DeliveryTrackingScreen> {
 
                     const SizedBox(height: 16),
 
-                    // ─── PROMINENT DELIVERY CONFIRMATION QR CODE ───────────────
+                    // ─── PROMINENT DELIVERY CONFIRMATION QR & OTP CARD ───────────────
                     Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
@@ -354,64 +407,122 @@ class _DeliveryTrackingScreenState extends State<DeliveryTrackingScreen> {
                           BoxShadow(color: const Color(0xFF0F172A).withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4)),
                         ],
                       ),
-                      child: Row(
+                      child: Column(
                         children: [
-                          GestureDetector(
-                            onTap: () => _showQrFullscreen(qrData, orderShortId),
-                            child: Container(
-                              padding: const EdgeInsets.all(6),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFFF8FAFC),
-                                borderRadius: BorderRadius.circular(10),
-                                border: Border.all(color: const Color(0xFFE2E8F0)),
+                          Row(
+                            children: [
+                              GestureDetector(
+                                onTap: () => _showQrFullscreen(qrData, orderShortId, otp: otp),
+                                child: Container(
+                                  padding: const EdgeInsets.all(6),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF8FAFC),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(color: const Color(0xFFE2E8F0)),
+                                  ),
+                                  child: QrImageView(
+                                    data: qrData,
+                                    version: QrVersions.auto,
+                                    size: 84.0,
+                                    eyeStyle: const QrEyeStyle(eyeShape: QrEyeShape.square, color: Color(0xFF0D6E48)),
+                                    dataModuleStyle: const QrDataModuleStyle(dataModuleShape: QrDataModuleShape.square, color: Color(0xFF0F172A)),
+                                  ),
+                                ),
                               ),
-                              child: QrImageView(
-                                data: qrData,
-                                version: QrVersions.auto,
-                                size: 84.0,
-                                eyeStyle: const QrEyeStyle(eyeShape: QrEyeShape.square, color: Color(0xFF0D6E48)),
-                                dataModuleStyle: const QrDataModuleStyle(dataModuleShape: QrDataModuleShape.square, color: Color(0xFF0F172A)),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
+                              const SizedBox(width: 14),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    const Icon(Icons.qr_code_scanner_rounded, size: 16, color: AppColors.primary),
-                                    const SizedBox(width: 4),
+                                    Row(
+                                      children: [
+                                        const Icon(Icons.qr_code_scanner_rounded, size: 16, color: AppColors.primary),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          'Patient Delivery Pass',
+                                          style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 13, color: AppColors.textDark),
+                                        ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 4),
                                     Text(
-                                      'Patient Delivery QR Code',
-                                      style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 13, color: AppColors.textDark),
+                                      'Present this QR code or secret OTP to courier upon package arrival to confirm handover.',
+                                      style: GoogleFonts.plusJakartaSans(fontSize: 11, color: AppColors.textGrey, height: 1.3),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    InkWell(
+                                      onTap: () => _showQrFullscreen(qrData, orderShortId, otp: otp),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            'Tap to Enlarge QR',
+                                            style: GoogleFonts.plusJakartaSans(fontSize: 11.5, fontWeight: FontWeight.w700, color: AppColors.primary),
+                                          ),
+                                          const SizedBox(width: 4),
+                                          const Icon(Icons.fullscreen_rounded, size: 16, color: AppColors.primary),
+                                        ],
+                                      ),
                                     ),
                                   ],
                                 ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Show this QR code to the delivery guy upon arrival. He will scan it and prompt you to sign on screen to receive your drugs.',
-                                  style: GoogleFonts.plusJakartaSans(fontSize: 11, color: AppColors.textGrey, height: 1.3),
-                                ),
-                                const SizedBox(height: 8),
-                                InkWell(
-                                  onTap: () => _showQrFullscreen(qrData, orderShortId),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Text(
-                                        'Tap to Enlarge QR',
-                                        style: GoogleFonts.plusJakartaSans(fontSize: 11.5, fontWeight: FontWeight.w700, color: AppColors.primary),
-                                      ),
-                                      const SizedBox(width: 4),
-                                      const Icon(Icons.fullscreen_rounded, size: 16, color: AppColors.primary),
-                                    ],
-                                  ),
-                                ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
+                          if (otp.isNotEmpty) ...[
+                            const SizedBox(height: 12),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFEF3C7),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: const Color(0xFFF59E0B), width: 1.2),
+                              ),
+                              child: Row(
+                                children: [
+                                  Container(
+                                    padding: const EdgeInsets.all(8),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0xFFFDE68A),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: const Icon(Icons.lock_rounded, size: 20, color: Color(0xFF92400E)),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'SECRET HANDOVER OTP',
+                                          style: GoogleFonts.plusJakartaSans(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.w800,
+                                            color: const Color(0xFF92400E),
+                                            letterSpacing: 0.5,
+                                          ),
+                                        ),
+                                        Text(
+                                          otp,
+                                          style: GoogleFonts.spaceMono(
+                                            fontSize: 22,
+                                            fontWeight: FontWeight.w900,
+                                            letterSpacing: 4,
+                                            color: const Color(0xFF78350F),
+                                          ),
+                                        ),
+                                        Text(
+                                          'Only give this code to the courier after package is handed to you.',
+                                          style: GoogleFonts.plusJakartaSans(fontSize: 10, color: const Color(0xFF92400E)),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),

@@ -23,7 +23,18 @@ const getDeliveries = async (req, res, next) => {
       },
       orderBy: { order: { createdAt: 'desc' } },
     });
-    res.json({ success: true, data: deliveries });
+
+    // SECURITY: Driver must NEVER receive the patient's secret OTP or pickup pass!
+    // The driver must obtain the OTP directly from the patient at their doorstep.
+    const sanitizedDeliveries = deliveries.map(d => {
+      if (d.order) {
+        const { otp, pickupCode, ...safeOrder } = d.order;
+        return { ...d, order: safeOrder };
+      }
+      return d;
+    });
+
+    res.json({ success: true, data: sanitizedDeliveries });
   } catch (err) { next(err); }
 };
 
@@ -34,6 +45,10 @@ const acceptDelivery = async (req, res, next) => {
       data: { status: 'assigned' },
       include: { order: true },
     });
+    if (delivery.order) {
+      delete delivery.order.otp;
+      delete delivery.order.pickupCode;
+    }
     res.json({ success: true, data: delivery });
   } catch (err) { next(err); }
 };
@@ -41,7 +56,7 @@ const acceptDelivery = async (req, res, next) => {
 const confirmPickup = async (req, res, next) => {
   try {
     const otp = generateOTP(4);
-    const expires = otpExpiresAt(15);
+    const expires = otpExpiresAt(30); // 30 minutes validity
 
     const delivery = await prisma.delivery.update({
       where: { id: req.params.id },
@@ -63,31 +78,64 @@ const confirmPickup = async (req, res, next) => {
       otpExpiresAt: expires,
     });
 
+    // Send secret OTP EXCLUSIVELY to the patient (via push/in-app notification)
     await notificationService.send(
       order.patientId,
       'Order On The Way! 🚴',
-      `Your medication has been picked up from ${order.pharmacy?.pharmacyName ?? 'the pharmacy'} and is on its way to you.`,
+      `Your medication has been picked up from ${order.pharmacy?.pharmacyName ?? 'the pharmacy'}. Your confidential delivery verification OTP is: ${otp}. Please provide this code to the driver upon delivery to verify handover.`,
       'delivery'
     ).catch(() => {});
+
+    // For the driver response: NEVER return the OTP!
+    const { otp: _hiddenOtp, pickupCode: _hiddenCode, ...safeOrder } = order;
 
     res.json({
       success: true,
       data: {
         ...delivery,
-        order: {
-          ...order,
-          otp,
-          otpExpiresAt: expires,
-        },
+        order: safeOrder,
       },
-      message: 'Pickup confirmed! Head to customer.',
+      message: 'Pickup confirmed! Head to customer address and ask for their 4-digit verification OTP on arrival.',
     });
   } catch (err) { next(err); }
 };
 
 const confirmDelivery = async (req, res, next) => {
   try {
-    const delivery = await prisma.delivery.update({
+    const { otp } = req.body;
+    if (!otp || typeof otp !== 'string' || !otp.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: 'Delivery verification OTP is required. Ask the customer for the 4-digit code shown on their PharmaLink app.',
+      });
+    }
+
+    const delivery = await prisma.delivery.findUnique({
+      where: { id: req.params.id },
+      include: { order: true },
+    });
+    if (!delivery) throw { status: 404, message: 'Delivery not found' };
+
+    if (delivery.status === 'delivered') {
+      return res.status(400).json({ success: false, message: 'This delivery has already been completed.' });
+    }
+
+    const normalize = (v) => (v || '').toString().trim().toUpperCase().replace(/^(PK-|OTP-|PL)/, '');
+    const cleanInput = normalize(otp);
+    const cleanExpected = normalize(delivery.order?.otp);
+    const rawInput = otp.toString().trim();
+    const rawExpected = (delivery.order?.otp || '').toString().trim();
+
+    const isMatch = (rawInput && rawInput === rawExpected) || (cleanInput && cleanInput === cleanExpected);
+
+    if (!isMatch) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid delivery OTP! The code entered does not match the customer\'s secret verification code. Please ask the customer to check their PharmaLink app.',
+      });
+    }
+
+    const updatedDelivery = await prisma.delivery.update({
       where: { id: req.params.id },
       data: { status: 'delivered', deliveredAt: new Date() },
     });
@@ -99,7 +147,12 @@ const confirmDelivery = async (req, res, next) => {
     });
 
     emitToOrder(delivery.orderId, 'order:status_change', { orderId: delivery.orderId, status: 'delivered' });
-    await notificationService.send(order.patientId, 'Order Delivered! 🎉', 'Your order has been delivered successfully.', 'order').catch(() => {});
+    await notificationService.send(
+      order.patientId,
+      'Order Delivered! 🎉',
+      'Your order has been verified with your secret OTP and delivered successfully. Thank you for using PharmaLink!',
+      'order'
+    ).catch(() => {});
 
     // Driver commission 10%
     const profile = await prisma.driverProfile.findUnique({ where: { userId: req.user.id } });
@@ -116,7 +169,7 @@ const confirmDelivery = async (req, res, next) => {
       },
     }).catch(() => {});
 
-    res.json({ success: true, data: delivery, message: 'Delivery completed successfully' });
+    res.json({ success: true, data: updatedDelivery, message: 'OTP verified! Delivery completed successfully.' });
   } catch (err) { next(err); }
 };
 

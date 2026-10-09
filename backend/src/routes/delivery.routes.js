@@ -34,6 +34,22 @@ router.get('/:orderId', authenticate, async (req, res, next) => {
       });
     }
 
+    if (delivery && delivery.order) {
+      const isPatientOwner = req.user && req.user.id === delivery.order.patientId;
+      const isStaffOrAdmin = req.user && (req.user.role === 'admin' || req.user.role === 'pharmacist');
+      if (!isPatientOwner && !isStaffOrAdmin) {
+        // Driver or third party: strip secret OTP and pickupCode
+        delivery = {
+          ...delivery,
+          order: {
+            ...delivery.order,
+            otp: undefined,
+            pickupCode: undefined,
+          },
+        };
+      }
+    }
+
     res.json({ success: true, data: delivery });
   } catch (err) { next(err); }
 });
