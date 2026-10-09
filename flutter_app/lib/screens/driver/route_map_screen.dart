@@ -137,155 +137,7 @@ class _RouteMapScreenState extends State<RouteMapScreen> {
 
   /// Trigger QR Code Scan & Patient Signature Flow
   void _startQrScanAndSignatureFlow() {
-    final codeCtrl = TextEditingController();
-    final shortOrderId = widget.orderId.length >= 8 ? widget.orderId.substring(0, 8).toUpperCase() : widget.orderId.toUpperCase();
-
-    showDialog(
-      context: context,
-      barrierDismissible: true,
-      builder: (ctx) => Dialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-        child: Container(
-          width: double.infinity,
-          constraints: const BoxConstraints(maxWidth: 500),
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: const BoxDecoration(color: AppColors.lightGreen, shape: BoxShape.circle),
-                    child: const Icon(Icons.qr_code_scanner_rounded, color: AppColors.primary, size: 24),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Doorstep Delivery Verification',
-                          style: GoogleFonts.plusJakartaSans(fontSize: 16, fontWeight: FontWeight.w800),
-                        ),
-                        Text(
-                          'Order #$shortOrderId • ${widget.customerName ?? "Patient"}',
-                          style: GoogleFonts.plusJakartaSans(fontSize: 12, color: AppColors.textGrey),
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close, size: 20),
-                    onPressed: () => Navigator.pop(ctx),
-                  ),
-                ],
-              ),
-              const Divider(height: 20),
-
-              // Security notice
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFEF3C7),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFF59E0B)),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.lock_person_rounded, color: Color(0xFFB45309), size: 22),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        'The patient is the ONLY person with the secret handover code. Ask them to check their PharmaLink app or scan their screen.',
-                        style: GoogleFonts.plusJakartaSans(fontSize: 11.5, color: const Color(0xFF78350F), height: 1.35),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 14),
-
-              // Scanner Preview Card
-              Container(
-                height: 140,
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0F172A),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: AppColors.primary, width: 2),
-                ),
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: AppColors.primary.withOpacity(0.2),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(Icons.camera_alt_outlined, color: Color(0xFF10B981), size: 28),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'Scan Patient Screen / QR Code Pass',
-                        style: GoogleFonts.plusJakartaSans(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Point camera at the patient\'s PharmaLink app',
-                        style: GoogleFonts.plusJakartaSans(color: Colors.white60, fontSize: 11),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(height: 14),
-
-              // Patient Secret OTP entry field
-              PharmaField(
-                label: 'Enter Patient 4-Digit Secret OTP *',
-                hint: 'e.g. 4821 (or paste QR scan string)',
-                prefixIcon: Icons.pin_rounded,
-                keyboardType: TextInputType.text,
-                controller: codeCtrl,
-              ),
-              const SizedBox(height: 14),
-
-              PharmaButton(
-                label: 'Verify OTP & Open Signature Pad',
-                icon: Icons.draw_rounded,
-                onPressed: () {
-                  final input = codeCtrl.text.trim();
-                  if (input.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Please enter the 4-digit secret OTP provided by the patient.'),
-                        backgroundColor: AppColors.error,
-                      ),
-                    );
-                    return;
-                  }
-
-                  String otpToUse = input;
-                  if (input.contains(':')) {
-                    final parts = input.split(':');
-                    if (parts.length >= 4 && parts[3].trim().isNotEmpty) {
-                      otpToUse = parts[3].trim();
-                    }
-                  }
-
-                  Navigator.pop(ctx);
-                  _openSignaturePadDialog(verifiedOtp: otpToUse);
-                },
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+    _openSignaturePadDialog();
   }
 
   /// Open Digital Signature Pad for Patient to Sign
@@ -298,227 +150,261 @@ class _RouteMapScreenState extends State<RouteMapScreen> {
     final TextEditingController otpCtrl = TextEditingController(text: verifiedOtp ?? '');
     bool isSavingSignature = false;
     final commissionFcfa = ((_orderTotal > 0 ? _orderTotal : 5000) * 0.1).round();
+    final shortOrderId = widget.orderId.length >= 8 ? widget.orderId.substring(0, 8).toUpperCase() : widget.orderId.toUpperCase();
 
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (dlgCtx) => StatefulBuilder(
-        builder: (dlgCtx, setDlgState) => AlertDialog(
+        builder: (dlgCtx, setDlgState) => Dialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-          titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 10),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 20),
-          title: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: const BoxDecoration(color: AppColors.lightGreen, shape: BoxShape.circle),
-                child: const Icon(Icons.draw_rounded, color: AppColors.primary, size: 22),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Patient Digital Signature',
-                      style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 16),
-                    ),
-                    Text(
-                      'Hand device to patient to sign for receipt',
-                      style: GoogleFonts.plusJakartaSans(fontSize: 11, color: AppColors.textGrey),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 6),
-                Container(
-                  decoration: BoxDecoration(
-                    border: Border.all(color: AppColors.primary, width: 2),
-                    borderRadius: BorderRadius.circular(16),
-                    color: Colors.white,
-                    boxShadow: [
-                      BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2)),
-                    ],
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(14),
-                    child: Signature(
-                      controller: sigController,
-                      height: 160,
-                      backgroundColor: const Color(0xFFFAFAFA),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      'Patient signs above with finger',
-                      style: GoogleFonts.plusJakartaSans(fontSize: 11, color: AppColors.textGrey, fontStyle: FontStyle.italic),
-                    ),
-                    TextButton.icon(
-                      style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
-                      icon: const Icon(Icons.refresh, size: 14, color: Color(0xFFEF4444)),
-                      label: const Text('Clear', style: TextStyle(color: Color(0xFFEF4444), fontSize: 12, fontWeight: FontWeight.w700)),
-                      onPressed: () => sigController.clear(),
-                    ),
-                  ],
-                ),
-                const Divider(height: 16),
-
-                // Doorstep Customer Handover OTP Input
-                PharmaField(
-                  label: 'Customer Secret 4-Digit Handover OTP *',
-                  hint: 'Enter 4-digit code given by customer',
-                  prefixIcon: Icons.lock_outline_rounded,
-                  keyboardType: TextInputType.text,
-                  controller: otpCtrl,
-                ),
-                const SizedBox(height: 10),
-
-                // Summary Info
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF8FAFC),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFFE2E8F0)),
-                  ),
-                  child: Column(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+          child: Container(
+            width: double.infinity,
+            constraints: const BoxConstraints(maxWidth: 480),
+            padding: const EdgeInsets.all(20),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Dialog Header
+                  Row(
                     children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('Pharmacy Payment', style: TextStyle(fontSize: 12, color: AppColors.textGrey)),
-                          const Text('Will be VALIDATED', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: Color(0xFF10B981))),
-                        ],
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: const BoxDecoration(color: AppColors.lightGreen, shape: BoxShape.circle),
+                        child: const Icon(Icons.draw_rounded, color: AppColors.primary, size: 24),
                       ),
-                      const SizedBox(height: 4),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('Your Driver Commission', style: TextStyle(fontSize: 12, color: AppColors.textGrey)),
-                          Text('FCFA $commissionFcfa (10%)', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: AppColors.primary)),
-                        ],
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Doorstep Signature & Handover',
+                              style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 16),
+                            ),
+                            Text(
+                              'Order #$shortOrderId • ${widget.customerName ?? "Patient"}',
+                              style: GoogleFonts.plusJakartaSans(fontSize: 12, color: AppColors.textGrey),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 20),
+                        onPressed: isSavingSignature ? null : () => Navigator.pop(dlgCtx),
                       ),
                     ],
                   ),
-                ),
-                const SizedBox(height: 12),
-              ],
+                  const Divider(height: 20),
+
+                  // Patient instruction banner
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF3C7),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFF59E0B)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.lock_outline_rounded, color: Color(0xFFB45309), size: 18),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Hand device to patient to sign. Enter their secret 4-digit code shown in their app.',
+                            style: GoogleFonts.plusJakartaSans(fontSize: 11.5, color: const Color(0xFF78350F), height: 1.3),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  // Signature Canvas
+                  Text(
+                    '1. Recipient Signature *',
+                    style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700, fontSize: 13),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    width: double.infinity,
+                    height: 170,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: AppColors.primary, width: 2),
+                      borderRadius: BorderRadius.circular(16),
+                      color: Colors.white,
+                      boxShadow: [
+                        BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2)),
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: Signature(
+                        controller: sigController,
+                        height: 170,
+                        backgroundColor: const Color(0xFFFAFAFA),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Patient signs with finger above',
+                        style: GoogleFonts.plusJakartaSans(fontSize: 11, color: AppColors.textGrey, fontStyle: FontStyle.italic),
+                      ),
+                      TextButton.icon(
+                        style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                        icon: const Icon(Icons.refresh, size: 14, color: Color(0xFFEF4444)),
+                        label: const Text('Clear Signature', style: TextStyle(color: Color(0xFFEF4444), fontSize: 12, fontWeight: FontWeight.w700)),
+                        onPressed: () => sigController.clear(),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 20),
+
+                  // Secret OTP Input
+                  Text(
+                    '2. Secret 4-Digit Handover OTP *',
+                    style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700, fontSize: 13),
+                  ),
+                  const SizedBox(height: 6),
+                  PharmaField(
+                    label: 'Patient Verification Code',
+                    hint: 'e.g. 4821 (or paste QR scan pass)',
+                    prefixIcon: Icons.pin_rounded,
+                    keyboardType: TextInputType.text,
+                    controller: otpCtrl,
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Summary Commission box
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF8FAFC),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text('Your Driver Commission', style: TextStyle(fontSize: 12, color: AppColors.textGrey)),
+                        Text('FCFA $commissionFcfa (10%)', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800, color: AppColors.primary)),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Action Buttons
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextButton(
+                          onPressed: isSavingSignature ? null : () => Navigator.pop(dlgCtx),
+                          child: Text('Cancel', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600, color: AppColors.textGrey)),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        flex: 2,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                          icon: isSavingSignature
+                              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                              : const Icon(Icons.check_circle, size: 18),
+                          label: Text(
+                            isSavingSignature ? 'Processing...' : 'Confirm Delivery',
+                            style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 13),
+                          ),
+                          onPressed: isSavingSignature
+                              ? null
+                              : () async {
+                                  final rawOtp = otpCtrl.text.trim();
+                                  if (rawOtp.isEmpty) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Please enter the customer\'s secret 4-digit OTP.'),
+                                        backgroundColor: AppColors.error,
+                                      ),
+                                    );
+                                    return;
+                                  }
+
+                                  if (sigController.isEmpty) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(content: Text('Please have the patient sign before confirming delivery.'), backgroundColor: AppColors.error),
+                                    );
+                                    return;
+                                  }
+
+                                  String cleanOtp = rawOtp;
+                                  if (cleanOtp.contains(':')) {
+                                    final parts = cleanOtp.split(':');
+                                    if (parts.length >= 4 && parts[3].trim().isNotEmpty) {
+                                      cleanOtp = parts[3].trim();
+                                    }
+                                  }
+
+                                  setDlgState(() => isSavingSignature = true);
+                                  try {
+                                    final Uint8List? pngBytes = await sigController.toPngBytes();
+                                    String? base64Sig;
+                                    if (pngBytes != null) {
+                                      base64Sig = 'data:image/png;base64,${base64Encode(pngBytes)}';
+                                    }
+
+                                    // 1. Submit signature
+                                    await _api.post('/orders/${widget.orderId}/signature', data: {
+                                      'signatureBase64': base64Sig,
+                                    }).catchError((_) => null);
+
+                                    // 2. Patch delivery status with secret OTP
+                                    await _api.patch('/driver/deliveries/${widget.deliveryId}/deliver', data: {
+                                      'otp': cleanOtp,
+                                    });
+
+                                    if (mounted && dlgCtx.mounted) {
+                                      Navigator.pop(dlgCtx);
+                                    }
+
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(
+                                          content: Text('🎉 Delivery completed! FCFA $commissionFcfa commission credited to your wallet.'),
+                                          backgroundColor: AppColors.primary,
+                                          duration: const Duration(seconds: 4),
+                                        ),
+                                      );
+                                      Navigator.pop(context, true);
+                                    }
+                                  } catch (e) {
+                                    setDlgState(() => isSavingSignature = false);
+                                    String errorMsg = 'Invalid verification OTP! Please ask the customer to check their PharmaLink app.';
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(content: Text(errorMsg), backgroundColor: AppColors.error),
+                                      );
+                                    }
+                                  }
+                                },
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ),
-          actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 18),
-          actions: [
-            Row(
-              children: [
-                Expanded(
-                  child: TextButton(
-                    onPressed: isSavingSignature ? null : () => Navigator.pop(dlgCtx),
-                    child: Text('Cancel', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600, color: AppColors.textGrey)),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  flex: 2,
-                  child: ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    ),
-                    icon: isSavingSignature
-                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                        : const Icon(Icons.check_circle, size: 18),
-                    label: Text(
-                      isSavingSignature ? 'Processing...' : 'Confirm Delivery',
-                      style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 13),
-                    ),
-                    onPressed: isSavingSignature
-                        ? null
-                        : () async {
-                            final rawOtp = otpCtrl.text.trim();
-                            if (rawOtp.isEmpty) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Please enter the customer\'s secret 4-digit OTP.'),
-                                  backgroundColor: AppColors.error,
-                                ),
-                              );
-                              return;
-                            }
-
-                            if (sigController.isEmpty) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Please have the patient sign before confirming delivery.'), backgroundColor: AppColors.error),
-                              );
-                              return;
-                            }
-
-                            String cleanOtp = rawOtp;
-                            if (cleanOtp.contains(':')) {
-                              final parts = cleanOtp.split(':');
-                              if (parts.length >= 4 && parts[3].trim().isNotEmpty) {
-                                cleanOtp = parts[3].trim();
-                              }
-                            }
-
-                            setDlgState(() => isSavingSignature = true);
-                            try {
-                              final Uint8List? pngBytes = await sigController.toPngBytes();
-                              String? base64Sig;
-                              if (pngBytes != null) {
-                                base64Sig = 'data:image/png;base64,${base64Encode(pngBytes)}';
-                              }
-
-                              // 1. Submit signature
-                              await _api.post('/orders/${widget.orderId}/signature', data: {
-                                'signatureBase64': base64Sig,
-                              }).catchError((_) => null);
-
-                              // 2. Patch delivery status with secret OTP
-                              await _api.patch('/driver/deliveries/${widget.deliveryId}/deliver', data: {
-                                'otp': cleanOtp,
-                              });
-
-                              if (mounted && dlgCtx.mounted) {
-                                Navigator.pop(dlgCtx);
-                              }
-
-                              if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('🎉 Delivery completed! FCFA $commissionFcfa commission credited to your wallet.'),
-                                    backgroundColor: AppColors.primary,
-                                    duration: const Duration(seconds: 4),
-                                  ),
-                                );
-                                Navigator.pop(context, true);
-                              }
-                            } catch (e) {
-                              setDlgState(() => isSavingSignature = false);
-                              String errorMsg = 'Invalid verification OTP! Please ask the customer to check their PharmaLink app.';
-                              if (mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(content: Text(errorMsg), backgroundColor: AppColors.error),
-                                );
-                              }
-                            }
-                          },
-                  ),
-                ),
-              ],
-            ),
-          ],
         ),
       ),
     );

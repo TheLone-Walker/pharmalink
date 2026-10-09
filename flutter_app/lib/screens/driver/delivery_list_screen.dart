@@ -1,5 +1,8 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:signature/signature.dart';
 import '../../services/api_service.dart';
 import '../../services/socket_service.dart';
 import '../../utils/constants.dart';
@@ -89,102 +92,240 @@ class _DeliveryListScreenState extends State<DeliveryListScreen> with SingleTick
 
   Future<void> _confirmDelivery(Map<String, dynamic> delivery) async {
     final patientName = delivery['order']?['patient']?['name'] ?? 'Recipient';
+    final orderId = delivery['orderId']?.toString() ?? '';
+    final shortOrderId = (orderId.length >= 8) ? orderId.substring(0, 8).toUpperCase() : orderId.toUpperCase();
     final otpCtrl = TextEditingController();
+    final sigController = SignatureController(
+      penStrokeWidth: 3.5,
+      penColor: const Color(0xFF0F172A),
+      exportBackgroundColor: Colors.white,
+    );
     bool submitting = false;
 
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDlgState) => AlertDialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-          title: Row(
-            children: const [
-              Icon(Icons.verified_user_rounded, color: AppColors.primary, size: 24),
-              SizedBox(width: 8),
-              Expanded(
-                child: Text('Doorstep OTP Verification', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800)),
-              ),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Recipient: $patientName',
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Color(0xFF0F172A)),
-              ),
-              const SizedBox(height: 6),
-              const Text(
-                'Ask the customer for their secret 4-digit verification OTP shown in their PharmaLink app to complete handover:',
-                style: TextStyle(fontSize: 12, color: AppColors.textGrey, height: 1.4),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: otpCtrl,
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-                textAlign: TextAlign.center,
-                autofocus: true,
-                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w800, letterSpacing: 6, color: AppColors.primary),
-                decoration: InputDecoration(
-                  hintText: '• • • •',
-                  counterText: '',
-                  hintStyle: const TextStyle(color: Colors.black26, letterSpacing: 4),
-                  filled: true,
-                  fillColor: const Color(0xFFF1F5F9),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.primary)),
-                  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: AppColors.primary, width: 2)),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: submitting ? null : () => Navigator.pop(ctx),
-              child: const Text('Cancel', style: TextStyle(color: AppColors.textGrey)),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              ),
-              onPressed: submitting
-                  ? null
-                  : () async {
-                      final code = otpCtrl.text.trim();
-                      if (code.isEmpty) return;
-                      setDlgState(() => submitting = true);
-                      try {
-                        await _api.patch('/driver/deliveries/${delivery['id']}/deliver', data: {'otp': code});
-                        if (ctx.mounted) Navigator.pop(ctx);
-                        _loadDeliveries();
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('🎉 Delivery verified & completed! Commission credited to your wallet.'),
-                              backgroundColor: AppColors.primary,
+        builder: (ctx, setDlgState) => Dialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+          child: Container(
+            width: double.infinity,
+            constraints: const BoxConstraints(maxWidth: 480),
+            padding: const EdgeInsets.all(20),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: const BoxDecoration(color: AppColors.lightGreen, shape: BoxShape.circle),
+                        child: const Icon(Icons.draw_rounded, color: AppColors.primary, size: 24),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Doorstep Signature & Handover',
+                              style: GoogleFonts.plusJakartaSans(fontSize: 16, fontWeight: FontWeight.w800),
                             ),
-                          );
-                        }
-                      } catch (e) {
-                        setDlgState(() => submitting = false);
-                        String err = 'Invalid OTP code. Please ask customer to check their PharmaLink app.';
-                        if (mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            SnackBar(content: Text(err), backgroundColor: Colors.red),
-                          );
-                        }
-                      }
-                    },
-              child: submitting
-                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                  : const Text('Verify & Complete', style: TextStyle(fontWeight: FontWeight.w700)),
+                            Text(
+                              'Order #$shortOrderId • $patientName',
+                              style: GoogleFonts.plusJakartaSans(fontSize: 12, color: AppColors.textGrey),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 20),
+                        onPressed: submitting ? null : () => Navigator.pop(ctx),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 20),
+
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFEF3C7),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: const Color(0xFFF59E0B)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.lock_outline_rounded, color: Color(0xFFB45309), size: 18),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Hand device to patient to sign. Enter their secret 4-digit code shown in their app.',
+                            style: GoogleFonts.plusJakartaSans(fontSize: 11.5, color: const Color(0xFF78350F), height: 1.3),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+
+                  Text(
+                    '1. Recipient Signature *',
+                    style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700, fontSize: 13),
+                  ),
+                  const SizedBox(height: 6),
+                  Container(
+                    width: double.infinity,
+                    height: 170,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: AppColors.primary, width: 2),
+                      borderRadius: BorderRadius.circular(16),
+                      color: Colors.white,
+                      boxShadow: [
+                        BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 2)),
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: Signature(
+                        controller: sigController,
+                        height: 170,
+                        backgroundColor: const Color(0xFFFAFAFA),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Patient signs with finger above',
+                        style: GoogleFonts.plusJakartaSans(fontSize: 11, color: AppColors.textGrey, fontStyle: FontStyle.italic),
+                      ),
+                      TextButton.icon(
+                        style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                        icon: const Icon(Icons.refresh, size: 14, color: Color(0xFFEF4444)),
+                        label: const Text('Clear Signature', style: TextStyle(color: Color(0xFFEF4444), fontSize: 12, fontWeight: FontWeight.w700)),
+                        onPressed: () => sigController.clear(),
+                      ),
+                    ],
+                  ),
+                  const Divider(height: 20),
+
+                  Text(
+                    '2. Secret 4-Digit Handover OTP *',
+                    style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w700, fontSize: 13),
+                  ),
+                  const SizedBox(height: 6),
+                  PharmaField(
+                    label: 'Patient Verification Code',
+                    hint: 'e.g. 4821 (or paste QR scan pass)',
+                    prefixIcon: Icons.pin_rounded,
+                    keyboardType: TextInputType.text,
+                    controller: otpCtrl,
+                  ),
+                  const SizedBox(height: 16),
+
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextButton(
+                          onPressed: submitting ? null : () => Navigator.pop(ctx),
+                          child: Text('Cancel', style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w600, color: AppColors.textGrey)),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        flex: 2,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          ),
+                          icon: submitting
+                              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                              : const Icon(Icons.check_circle, size: 18),
+                          label: Text(
+                            submitting ? 'Processing...' : 'Confirm Delivery',
+                            style: GoogleFonts.plusJakartaSans(fontWeight: FontWeight.w800, fontSize: 13),
+                          ),
+                          onPressed: submitting
+                              ? null
+                              : () async {
+                                  final rawOtp = otpCtrl.text.trim();
+                                  if (rawOtp.isEmpty) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Please enter the customer\'s secret 4-digit OTP.'),
+                                        backgroundColor: AppColors.error,
+                                      ),
+                                    );
+                                    return;
+                                  }
+
+                                  if (sigController.isEmpty) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(content: Text('Please have the patient sign before confirming delivery.'), backgroundColor: AppColors.error),
+                                    );
+                                    return;
+                                  }
+
+                                  String cleanOtp = rawOtp;
+                                  if (cleanOtp.contains(':')) {
+                                    final parts = cleanOtp.split(':');
+                                    if (parts.length >= 4 && parts[3].trim().isNotEmpty) {
+                                      cleanOtp = parts[3].trim();
+                                    }
+                                  }
+
+                                  setDlgState(() => submitting = true);
+                                  try {
+                                    final Uint8List? pngBytes = await sigController.toPngBytes();
+                                    String? base64Sig;
+                                    if (pngBytes != null) {
+                                      base64Sig = 'data:image/png;base64,${base64Encode(pngBytes)}';
+                                    }
+
+                                    if (orderId.isNotEmpty) {
+                                      await _api.post('/orders/$orderId/signature', data: {
+                                        'signatureBase64': base64Sig,
+                                      }).catchError((_) => null);
+                                    }
+
+                                    await _api.patch('/driver/deliveries/${delivery['id']}/deliver', data: {'otp': cleanOtp});
+
+                                    if (ctx.mounted) Navigator.pop(ctx);
+                                    _loadDeliveries();
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('🎉 Delivery verified & completed! Commission credited to your wallet.'),
+                                          backgroundColor: AppColors.primary,
+                                        ),
+                                      );
+                                    }
+                                  } catch (e) {
+                                    setDlgState(() => submitting = false);
+                                    String err = 'Invalid OTP code. Please ask customer to check their PharmaLink app.';
+                                    if (mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(content: Text(err), backgroundColor: Colors.red),
+                                      );
+                                    }
+                                  }
+                                },
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ],
+          ),
         ),
       ),
     );
