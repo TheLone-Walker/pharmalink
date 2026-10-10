@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../../services/api_service.dart';
+import '../../services/route_directions_service.dart';
 import '../../services/socket_service.dart';
 import '../../utils/constants.dart';
 import '../../widgets/shared_widgets.dart';
@@ -18,11 +19,15 @@ class DeliveryTrackingScreen extends StatefulWidget {
 class _DeliveryTrackingScreenState extends State<DeliveryTrackingScreen> {
   final _api = ApiService();
   final _socket = SocketService();
+  final _directionsService = RouteDirectionsService();
   GoogleMapController? _mapCtrl;
   Map? _delivery;
   bool _loading = true;
   LatLng _driverPos = const LatLng(3.848, 11.502);
+  LatLng? _destinationPos;
   final Set<Marker> _markers = {};
+  final Set<Polyline> _polylines = {};
+  bool _fetchingRoute = false;
 
   @override
   void initState() {
@@ -41,6 +46,7 @@ class _DeliveryTrackingScreenState extends State<DeliveryTrackingScreen> {
           infoWindow: const InfoWindow(title: 'Courier Driver'),
         ));
       });
+      _updateRoadRoute();
       _mapCtrl?.animateCamera(CameraUpdate.newLatLng(_driverPos));
     });
 
@@ -147,15 +153,47 @@ class _DeliveryTrackingScreenState extends State<DeliveryTrackingScreen> {
           infoWindow: const InfoWindow(title: 'Driver'),
         ));
         if (d['order']?['deliveryLat'] != null) {
+          _destinationPos = LatLng(d['order']['deliveryLat'], d['order']['deliveryLng']);
           _markers.add(Marker(
             markerId: const MarkerId('destination'),
-            position: LatLng(d['order']['deliveryLat'], d['order']['deliveryLng']),
+            position: _destinationPos!,
             infoWindow: const InfoWindow(title: 'Delivery Location'),
           ));
         }
       });
+      _updateRoadRoute();
     } catch (_) {} finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  /// Calculates and renders road path that hugs road curves and turns
+  Future<void> _updateRoadRoute() async {
+    if (_destinationPos == null || _fetchingRoute) return;
+    _fetchingRoute = true;
+    try {
+      final roadPoints = await _directionsService.getRoadPath(
+        origin: _driverPos,
+        destination: _destinationPos!,
+      );
+      if (!mounted) return;
+      setState(() {
+        _polylines.removeWhere((p) => p.polylineId.value == 'delivery_route');
+        _polylines.add(
+          Polyline(
+            polylineId: const PolylineId('delivery_route'),
+            points: roadPoints,
+            color: AppColors.primary,
+            width: 5,
+            jointType: JointType.round,
+            startCap: Cap.roundCap,
+            endCap: Cap.roundCap,
+          ),
+        );
+      });
+    } catch (_) {
+    } finally {
+      _fetchingRoute = false;
     }
   }
 
@@ -330,6 +368,7 @@ class _DeliveryTrackingScreenState extends State<DeliveryTrackingScreen> {
                 child: GoogleMap(
                   initialCameraPosition: CameraPosition(target: _driverPos, zoom: 14),
                   markers: _markers,
+                  polylines: _polylines,
                   onMapCreated: (c) => _mapCtrl = c,
                   myLocationEnabled: true,
                   myLocationButtonEnabled: false,

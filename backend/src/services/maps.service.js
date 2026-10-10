@@ -69,40 +69,99 @@ const getNearbyPharmacies = async (lat, lng, radius = 5000) => {
 };
 
 /**
- * Get route directions & polyline
+ * Get route directions & polyline following real road curves
  */
 const getDirections = async (originLat, originLng, destLat, destLng) => {
+  const oLat = parseFloat(originLat);
+  const oLng = parseFloat(originLng);
+  const dLat = parseFloat(destLat);
+  const dLng = parseFloat(destLng);
+
+  // 1. Try Google Directions if key is present
   const apiKey = process.env.GOOGLE_MAPS_API_KEY;
   if (apiKey && apiKey !== 'your_google_maps_api_key') {
     try {
       const res = await axios.get(`${MAPS_BASE}/directions/json`, {
         params: {
-          origin: `${originLat},${originLng}`,
-          destination: `${destLat},${destLng}`,
+          origin: `${oLat},${oLng}`,
+          destination: `${dLat},${dLng}`,
           mode: 'driving',
           key: apiKey,
         },
-        timeout: 10000,
+        timeout: 6000,
       });
-      if (res.data.routes && res.data.routes[0]) {
+      if (res.data.status === 'OK' && res.data.routes && res.data.routes[0]) {
         return res.data.routes[0];
       }
     } catch (e) {
-      console.warn('[Maps] Google Directions API warning:', e.message);
+      console.warn('[Maps] Google Directions API unavailable, falling back to OSM:', e.message);
     }
   }
 
-  // Calculated fallback route
-  const distKm = calculateHaversineDistance(originLat, originLng, destLat, destLng);
-  const durationMins = Math.max(5, Math.round(distKm * 2.5)); // ~25km/h city bike speed
+  // 2. Query OpenStreetMap / OSRM Routing for realistic road network curves
+  const osmEndpoints = [
+    `https://routing.openstreetmap.de/routed-car/route/v1/driving/${oLng},${oLat};${dLng},${dLat}?overview=full&geometries=geojson`,
+    `https://router.project-osrm.org/route/v1/driving/${oLng},${oLat};${dLng},${dLat}?overview=full&geometries=geojson`,
+  ];
+
+  for (const url of osmEndpoints) {
+    try {
+      const res = await axios.get(url, { timeout: 8000 });
+      if (res.data.code === 'Ok' && res.data.routes && res.data.routes[0]) {
+        const route = res.data.routes[0];
+        const rawCoords = route.geometry?.coordinates || [];
+        const coordinates = rawCoords.map(([lng, lat]) => ({ lat, lng }));
+        const distanceM = Math.round(route.distance || 0);
+        const durationS = Math.round(route.duration || 0);
+        return {
+          overview_polyline: { points: '' },
+          coordinates,
+          legs: [
+            {
+              distance: { text: `${(distanceM / 1000).toFixed(1)} km`, value: distanceM },
+              duration: { text: `${Math.max(1, Math.round(durationS / 60))} mins`, value: durationS },
+              start_location: { lat: oLat, lng: oLng },
+              end_location: { lat: dLat, lng: dLng },
+            },
+          ],
+        };
+      }
+    } catch (e) {
+      console.warn('[Maps] OSM endpoint error:', e.message);
+    }
+  }
+
+  // 3. Calculated fallback route with simulated street bends if completely offline
+  const distKm = calculateHaversineDistance(oLat, oLng, dLat, dLng);
+  const durationMins = Math.max(5, Math.round(distKm * 2.5));
+  
+  // Generate multi-segment curve waypoints following a road bend pattern
+  const fallbackCoords = [];
+  const steps = 16;
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const baseLat = oLat + (dLat - oLat) * t;
+    const baseLng = oLng + (dLng - oLng) * t;
+    // Add realistic road curve offset using sine perpendicular deviation
+    const deviation = Math.sin(t * Math.PI) * 0.0025;
+    const perpLat = -(dLng - oLng);
+    const perpLng = (dLat - oLat);
+    const norm = Math.sqrt(perpLat * perpLat + perpLng * perpLng) || 1;
+    fallbackCoords.push({
+      lat: baseLat + (perpLat / norm) * deviation,
+      lng: baseLng + (perpLng / norm) * deviation,
+    });
+  }
+
   return {
     overview_polyline: { points: '' },
+    coordinates: fallbackCoords,
     legs: [
       {
         distance: { text: `${distKm.toFixed(1)} km`, value: Math.round(distKm * 1000) },
         duration: { text: `${durationMins} mins`, value: durationMins * 60 },
-        start_location: { lat: parseFloat(originLat), lng: parseFloat(originLng) },
-        end_location: { lat: parseFloat(destLat), lng: parseFloat(destLng) },
+        start_location: { lat: oLat, lng: oLng },
+        end_location: { lat: dLat, lng: dLng },
       },
     ],
   };

@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:signature/signature.dart';
 import '../../services/api_service.dart';
+import '../../services/route_directions_service.dart';
 import '../../services/socket_service.dart';
 import '../../utils/constants.dart';
 import '../../widgets/shared_widgets.dart';
@@ -79,6 +80,9 @@ class _RouteMapScreenState extends State<RouteMapScreen> {
     } catch (_) {}
   }
 
+  final _directionsService = RouteDirectionsService();
+  bool _fetchingRoute = false;
+
   void _setupMap() {
     final pickup = widget.pickupLat != null
         ? LatLng(widget.pickupLat!, widget.pickupLng!)
@@ -101,16 +105,57 @@ class _RouteMapScreenState extends State<RouteMapScreen> {
           icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
           infoWindow: InfoWindow(title: widget.customerName ?? 'Customer', snippet: 'Dropoff Point'),
         ),
-      ]);
-      _polylines.add(
-        Polyline(
-          polylineId: const PolylineId('route'),
-          points: [pickup, _currentPos, dropoff],
-          color: AppColors.primary,
-          width: 4,
+        Marker(
+          markerId: const MarkerId('driver'),
+          position: _currentPos,
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+          infoWindow: const InfoWindow(title: 'You (Courier)', snippet: 'Live Position'),
         ),
-      );
+      ]);
     });
+
+    _loadRoadRoute();
+  }
+
+  /// Fetches and draws road path that hugs road curves and turns
+  Future<void> _loadRoadRoute() async {
+    if (_fetchingRoute) return;
+    _fetchingRoute = true;
+
+    final pickup = widget.pickupLat != null
+        ? LatLng(widget.pickupLat!, widget.pickupLng!)
+        : const LatLng(3.880, 11.516);
+    final dropoff = widget.dropoffLat != null
+        ? LatLng(widget.dropoffLat!, widget.dropoffLng!)
+        : const LatLng(3.848, 11.502);
+
+    final LatLng target = _pickedUp ? dropoff : pickup;
+
+    try {
+      final roadPoints = await _directionsService.getRoadPath(
+        origin: _currentPos,
+        destination: target,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _polylines.removeWhere((p) => p.polylineId.value == 'route');
+        _polylines.add(
+          Polyline(
+            polylineId: const PolylineId('route'),
+            points: roadPoints,
+            color: AppColors.primary,
+            width: 5,
+            jointType: JointType.round,
+            startCap: Cap.roundCap,
+            endCap: Cap.roundCap,
+          ),
+        );
+      });
+    } catch (_) {
+    } finally {
+      _fetchingRoute = false;
+    }
   }
 
   Future<void> _confirmPickup() async {
@@ -118,6 +163,7 @@ class _RouteMapScreenState extends State<RouteMapScreen> {
     try {
       await _api.patch('/driver/deliveries/${widget.deliveryId}/pickup');
       setState(() => _pickedUp = true);
+      _loadRoadRoute();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -630,9 +676,11 @@ class _RouteMapScreenState extends State<RouteMapScreen> {
                                     }
 
                                     // 1. Submit signature & unlock payment on backend
-                                    await _api.post('/orders/${widget.orderId}/signature', data: {
-                                      'signatureBase64': base64Sig,
-                                    }).catchError((_) => null);
+                                    try {
+                                      await _api.post('/orders/${widget.orderId}/signature', data: {
+                                        'signatureBase64': base64Sig,
+                                      });
+                                    } catch (_) {}
 
                                     // 2. Mark delivery completed with verified OTP
                                     await _api.patch('/driver/deliveries/${widget.deliveryId}/deliver', data: {
@@ -677,12 +725,25 @@ class _RouteMapScreenState extends State<RouteMapScreen> {
   }
 
   void _updateLocation(LatLng pos) {
+    _currentPos = pos;
+    setState(() {
+      _markers.removeWhere((m) => m.markerId.value == 'driver');
+      _markers.add(
+        Marker(
+          markerId: const MarkerId('driver'),
+          position: _currentPos,
+          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
+          infoWindow: const InfoWindow(title: 'You (Courier)', snippet: 'Live Position'),
+        ),
+      );
+    });
     _socket.sendLocation(widget.orderId, pos.latitude, pos.longitude);
     _api.put('/driver/location', data: {
       'lat': pos.latitude,
       'lng': pos.longitude,
       'orderId': widget.orderId,
     });
+    _loadRoadRoute();
   }
 
   @override

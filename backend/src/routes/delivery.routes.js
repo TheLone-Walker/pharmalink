@@ -3,6 +3,25 @@ const router = require('express').Router();
 const prisma = require('../config/db');
 const { authenticate } = require('../middleware/auth.middleware');
 
+router.get('/route-path', authenticate, async (req, res, next) => {
+  try {
+    const { originLat, originLng, destLat, destLng } = req.query;
+    if (!originLat || !originLng || !destLat || !destLng) {
+      return res.status(400).json({ success: false, message: 'Missing origin or destination coordinates' });
+    }
+    const { getDirections } = require('../services/maps.service');
+    const route = await getDirections(originLat, originLng, destLat, destLng);
+    res.json({
+      success: true,
+      data: {
+        coordinates: route.coordinates || [],
+        distance: route.legs?.[0]?.distance,
+        duration: route.legs?.[0]?.duration,
+      },
+    });
+  } catch (err) { next(err); }
+});
+
 router.get('/:orderId', authenticate, async (req, res, next) => {
   try {
     let delivery = await prisma.delivery.findFirst({
